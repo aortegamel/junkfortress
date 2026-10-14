@@ -1,31 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { ItemType, SavedBuildObject, SavedChain } from '../types/game';
+import type { ChainAnchor, ItemType, SavedBuildObject, SavedNail } from '../types/game';
 import {
-  chainParticipates,
   chainPlacementCheck,
-  computeSupport,
+  groundedNailObjects,
+  nailPlacementCheck,
   objectRect,
   placementCheck,
   rectIntersects,
 } from './StructureSystem';
 import { ITEM_DEFINITIONS } from '../data/items';
-import { CHAIN_MAX_LENGTH, CORE_RECT, GROUND_Y } from '../utils/Constants';
+import { CORE_RECT, GROUND_ANCHOR_ID, GROUND_Y, NAIL_MAX_LENGTH } from '../utils/Constants';
 
 function obj(id: string, type: ItemType, x: number, y: number, rotation = 0, hp = 1000): SavedBuildObject {
   return { id, type, x, y, rotation, hp };
 }
 
-function chain(
-  id: string,
-  a: string,
-  b: string,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-  hp = 60,
-): SavedChain {
-  return { id, anchorA: { objectId: a, x: ax, y: ay }, anchorB: { objectId: b, x: bx, y: by }, hp };
+function nail(id: string, a: string, b: string): SavedNail {
+  return { id, anchorA: { objectId: a, x: 0, y: 0 }, anchorB: { objectId: b, x: 0, y: 0 } };
 }
 
 function ids(set: Set<string>): string[] {
@@ -42,123 +33,101 @@ describe('objectRect', () => {
   });
 });
 
-describe('computeSupport', () => {
-  it('supports a tower that reaches the ground', () => {
-    const wood1 = obj('w1', 'plank', 400, 649);
-    const wood2 = obj('w2', 'plank', 400, 627);
-    const metal = obj('m', 'metal_sheet', 400, 605);
-    const result = computeSupport([wood1, wood2, metal], [], ITEM_DEFINITIONS);
-    expect(ids(result.supported)).toEqual(['m', 'w1', 'w2']);
+describe('groundedNailObjects', () => {
+  const base = obj('base', 'plank', 400, 649);
+  const load = obj('load', 'plank', 400, 627);
+  const top = obj('top', 'plank', 400, 605);
+  const nails = [nail('ground', GROUND_ANCHOR_ID, 'base'), nail('joint', 'base', 'load'), nail('upper', 'load', 'top')];
+
+  it('keeps un-nailed ground contacts dynamic', () => {
+    expect(ids(groundedNailObjects([base, load], []))).toEqual([]);
   });
 
-  it('declares a detached stack unsupported', () => {
-    const wood2 = obj('w2', 'plank', 400, 627);
-    const metal = obj('m', 'metal_sheet', 400, 605);
-    const result = computeSupport([wood2, metal], [], ITEM_DEFINITIONS);
-    expect(ids(result.supported)).toEqual([]);
+  it('freezes only the nail graph connected to ground', () => {
+    expect(ids(groundedNailObjects([base, load, top], nails))).toEqual(['base', 'load', 'top']);
+    expect(ids(groundedNailObjects([base, load, top], nails.slice(1)))).toEqual([]);
   });
 
-  it('supports an anvil hanging from a chained, grounded beam', () => {
-    const wood = obj('w', 'plank', 400, 649);
-    const anvil = obj('a', 'anvil', 400, 520);
-    const link = chain('c1', 'w', 'a', 0, -11, 0, -22);
-    const result = computeSupport([wood, anvil], [link], ITEM_DEFINITIONS);
-    expect(result.supported.has('w')).toBe(true);
-    expect(result.supported.has('c1')).toBe(true);
-    expect(result.supported.has('a')).toBe(true);
-    expect(result.deadChains).toEqual([]);
+  it('releases a nailed group when its anchor disappears', () => {
+    expect(ids(groundedNailObjects([load, top], nails))).toEqual([]);
+    expect(ids(groundedNailObjects([base, load, top], [nails[0], nails[2]]))).toEqual(['base']);
+  });
+});
+
+describe('nailPlacementCheck', () => {
+  const a = obj('a', 'plank', 400, 649);
+  const b = obj('b', 'plank', 400, 627);
+  const point = (objectId: string, x: number, y: number): ChainAnchor => ({ objectId, x, y });
+
+  it('accepts touching objects and a touching ground anchor', () => {
+    expect(nailPlacementCheck(point('a', 400, 638), point('b', 400, 638), [a, b]).valid).toBe(true);
+    expect(nailPlacementCheck(point('a', 400, 660), point(GROUND_ANCHOR_ID, 400, GROUND_Y), [a]).valid).toBe(true);
   });
 
-  it('drops the anvil when the supporting beam is destroyed', () => {
-    const anvil = obj('a', 'anvil', 400, 520);
-    const link = chain('c1', 'w', 'a', 0, -11, 0, -22);
-    const result = computeSupport([anvil], [link], ITEM_DEFINITIONS);
-    expect(result.supported.has('a')).toBe(false);
-    expect(result.deadChains.map((c) => c.id)).toEqual(['c1']);
+  it('rejects a nearby floating object and distant ground coordinates', () => {
+    const floating = { ...a, y: 644 };
+    expect(nailPlacementCheck(point('a', 400, 655), point(GROUND_ANCHOR_ID, 400, GROUND_Y), [floating]).violation).toBe('not-touching');
+    expect(nailPlacementCheck(point('a', 400, 649), point(GROUND_ANCHOR_ID, 400, 649), [a]).violation).toBe('not-touching');
   });
 
-  it('drops the anvil when the chain reaches zero HP', () => {
-    const wood = obj('w', 'plank', 400, 649);
-    const anvil = obj('a', 'anvil', 400, 520);
-    const link = chain('c1', 'w', 'a', 0, -11, 0, -22, 0);
-    const result = computeSupport([wood, anvil], [link], ITEM_DEFINITIONS);
-    expect(result.supported.has('a')).toBe(false);
-    expect(result.deadChains.map((c) => c.id)).toEqual(['c1']);
+  it('rejects endpoints outside the selected shape', () => {
+    expect(nailPlacementCheck(point('a', 500, 649), point('b', 500, 638), [a, b]).violation).toBe('outside-object');
+    const rotated = obj('r', 'plank', 400, 500, 45);
+    expect(nailPlacementCheck(point('r', 450, 450), point('b', 450, 450), [rotated, b]).violation).toBe('outside-object');
   });
 
-  it('chains are supported when either anchor is supported', () => {
-    const wood = obj('w', 'plank', 400, 649);
-    const floating = obj('f', 'anvil', 400, 520);
-    const link = chain('c1', 'w', 'f', 0, -11, 0, -22);
-    const result = computeSupport([wood, floating], [link], ITEM_DEFINITIONS);
-    expect(result.supported.has('c1')).toBe(true);
-    expect(result.supported.has('f')).toBe(true);
+  it('rejects separated shapes within nail range', () => {
+    const separated = { ...b, y: 620 };
+    expect(nailPlacementCheck(point('a', 400, 638), point('b', 400, 631), [a, separated]).violation).toBe('not-touching');
   });
 
-  it('chainParticipates requires both anchors to exist', () => {
-    expect(chainParticipates(chain('c', 'a', 'b', 0, 0, 0, 0), new Set(['a']))).toBe(false);
-    expect(chainParticipates(chain('c', 'a', 'a', 0, 0, 0, 0), new Set(['a']))).toBe(false);
+  it('rejects missing, repeated, and distant endpoints', () => {
+    expect(nailPlacementCheck(point('a', 400, 638), point('gone', 400, 638), [a]).violation).toBe('missing-object');
+    expect(nailPlacementCheck(point('a', 400, 638), point('a', 400, 638), [a]).violation).toBe('same-object');
+    expect(nailPlacementCheck(point('a', 400, 638), point('b', 400 + NAIL_MAX_LENGTH + 1, 638), [a, b]).violation).toBe('too-long');
   });
 });
 
 describe('placementCheck', () => {
-  it('rejects a floating structural object', () => {
-    const result = placementCheck(obj('c', 'plank', 400, 300), [], [], ITEM_DEFINITIONS);
-    expect(result.valid).toBe(false);
-    expect(result.violations).toContain('unsupported');
+  it('accepts a piece placed in mid air, because nothing has to hold it up', () => {
+    expect(placementCheck(obj('c', 'plank', 400, 300), [], ITEM_DEFINITIONS).valid).toBe(true);
+    expect(placementCheck(obj('a', 'anvil', 400, 300), [], ITEM_DEFINITIONS).valid).toBe(true);
   });
 
-  it('accepts a structural object standing on the ground', () => {
-    const result = placementCheck(obj('c', 'plank', 400, 649), [], [], ITEM_DEFINITIONS);
-    expect(result.valid).toBe(true);
-  });
-
-  it('accepts a structural object touching a supported structure', () => {
-    const wood1 = obj('w1', 'plank', 400, 649);
-    const result = placementCheck(obj('w2', 'plank', 400, 627), [wood1], [], ITEM_DEFINITIONS);
-    expect(result.valid).toBe(true);
-  });
-
-  it('rejects structural objects touching only unsupported objects', () => {
-    const wood2 = obj('w2', 'plank', 400, 627);
-    const result = placementCheck(obj('w3', 'plank', 400, 605), [wood2], [], ITEM_DEFINITIONS);
-    expect(result.valid).toBe(false);
-    expect(result.violations).toContain('unsupported');
-  });
-
-  it('allows a heavy object to hang in the air (for chains)', () => {
-    const result = placementCheck(obj('a', 'anvil', 400, 300), [], [], ITEM_DEFINITIONS);
-    expect(result.valid).toBe(true);
+  it('accepts a piece touching another piece, supported or not', () => {
+    const grounded = obj('w1', 'plank', 400, 649);
+    const floating = obj('w2', 'plank', 400, 627);
+    expect(placementCheck(obj('w3', 'plank', 400, 605), [grounded, floating], ITEM_DEFINITIONS).valid).toBe(true);
   });
 
   it('rejects objects outside the build zone', () => {
-    const result = placementCheck(obj('c', 'anvil', 1200, 300), [], [], ITEM_DEFINITIONS);
+    const result = placementCheck(obj('c', 'anvil', 1200, 300), [], ITEM_DEFINITIONS);
     expect(result.valid).toBe(false);
     expect(result.violations).toContain('outside-zone');
   });
 
   it('rejects objects overlapping the core', () => {
-    const result = placementCheck(obj('c', 'anvil', CORE_RECT.x + CORE_RECT.width / 2, CORE_RECT.y + CORE_RECT.height / 2), [], [], ITEM_DEFINITIONS);
+    const result = placementCheck(obj('c', 'anvil', CORE_RECT.x + CORE_RECT.width / 2, CORE_RECT.y + CORE_RECT.height / 2), [], ITEM_DEFINITIONS);
     expect(result.valid).toBe(false);
     expect(result.violations).toContain('overlaps-core');
   });
 
   it('rejects objects overlapping another placed object', () => {
     const existing = obj('e', 'plank', 400, 649);
-    const result = placementCheck(obj('c', 'plank', 401, 649), [existing], [], ITEM_DEFINITIONS);
+    const result = placementCheck(obj('c', 'plank', 401, 649), [existing], ITEM_DEFINITIONS);
     expect(result.valid).toBe(false);
     expect(result.violations).toContain('overlaps-object');
   });
 
   it('accepts a 45° plate whose rotated box covers a piece it does not touch', () => {
     const existing = obj('e', 'plank', 400, 649);
-    const result = placementCheck(obj('c', 'metal_sheet', 480, 600, 45), [existing], [], ITEM_DEFINITIONS);
+    const result = placementCheck(obj('c', 'metal_sheet', 480, 600, 45), [existing], ITEM_DEFINITIONS);
     expect(result.valid).toBe(true);
   });
 
   it('ignores the candidate itself when checking overlap (moving)', () => {
     const candidate = obj('c', 'plank', 400, 649);
-    const result = placementCheck(candidate, [candidate], [], ITEM_DEFINITIONS);
+    const result = placementCheck(candidate, [candidate], ITEM_DEFINITIONS);
     expect(result.valid).toBe(true);
   });
 });
@@ -206,9 +175,6 @@ describe('chainPlacementCheck', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('defines the maximum chain length at 220 px', () => {
-    expect(CHAIN_MAX_LENGTH).toBe(220);
-  });
 });
 
 describe('rect helpers', () => {

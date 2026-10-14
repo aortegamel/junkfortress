@@ -1,34 +1,43 @@
 import Phaser from 'phaser';
-import { CHAIN_MAX_HP, CHAIN_MAX_LENGTH, GAME_HEIGHT, GAME_WIDTH } from '../utils/Constants';
-import { drawArena, drawBuildZone } from '../utils/Arena';
+import { CHAIN_MAX_HP, CHAIN_MAX_LENGTH, GAME_HEIGHT, GAME_WIDTH, GROUND_ANCHOR_ID, GROUND_Y, NAIL_MAX_LENGTH } from '../utils/Constants';
+import { createArenaPhysics, drawArena, drawBuildZone } from '../utils/Arena';
 import { runStore } from '../state/runStore';
 import { showPauseMenu } from '../ui/PauseMenu';
 import { ITEM_DEFINITIONS } from '../data/items';
-import { chainPlacementCheck, objectRect, placementCheck } from '../systems/StructureSystem';
+import { chainPlacementCheck, nailPlacementCheck, placementCheck } from '../systems/StructureSystem';
 import { sfx } from '../systems/Audio';
 import { Effects } from '../systems/Effects';
+import { WaveStructureManager } from '../systems/WaveStructureManager';
 import { setDebugProvider } from '../debug/DebugApi';
-import type { ChainViolation, PlacementViolation } from '../systems/StructureSystem';
-import type { ItemType, SavedBuildObject } from '../types/game';
+import type { NailViolation, PlacementViolation } from '../systems/StructureSystem';
+import type { ChainAnchor, ItemType, SavedBuildObject } from '../types/game';
+import { hasSeenHowTo, markHowToSeen, showHowTo } from '../ui/HowToPlay';
 
 /** Short, plain-language reason shown where the ghost was refused. */
 const REJECTION_TEXT: Record<PlacementViolation, string> = {
  'outside-zone': 'outside the build area',
  'overlaps-core': 'too close to the core',
  'overlaps-object': 'junk is in the way',
- unsupported: 'needs support underneath',
 };
 
-const CHAIN_TEXT: Record<ChainViolation, string> = {
+/** Attachments are either a chain or a nail, so one table covers both refusal reasons. */
+const ATTACH_TEXT: Record<Exclude<NailViolation, 'too-long'>, string> = {
  'same-object': 'pick a different object',
- 'too-long': `chain max ${CHAIN_MAX_LENGTH}px`,
  'missing-object': 'anchor must be on junk',
+ 'not-touching': 'nails need parts that touch',
+ 'outside-object': 'click on the junk itself',
 };
 
-type BuildMode = 'idle' | 'placing' | 'moving' | 'chain';
+function attachRejection(violation: NailViolation | null, nail: boolean): string {
+ if (violation === null) return '';
+ if (violation === 'too-long') return nail ? `nails reach ${NAIL_MAX_LENGTH}px` : `chain max ${CHAIN_MAX_LENGTH}px`;
+ return ATTACH_TEXT[violation];
+}
+
+type BuildMode = 'idle' | 'placing' | 'moving' | 'chain' | 'nail';
 
 /** Palette slots are fixed left-to-right, whatever the inventory holds. */
-const PALETTE_ORDER: ItemType[] = ['plank', 'metal_sheet', 'chain', 'anvil'];
+const PALETTE_ORDER: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil'];
 
 interface PendingAnchor {
  objectId: string; x: number; y: number;
@@ -54,20 +63,18 @@ const START_BTN = { x: GAME_WIDTH / 2, y: 30, w: 260, h: 52 };
 const ROTATE_STEP_DEG = 15;
 const COLOR_VALID = 0x7fd07f;
 const COLOR_INVALID = 0xd06a5f;
-/** Strand look; must stay identical to WaveStructureManager's CHAIN_* constants. */
-const CHAIN_STYLE = {
- line: 6, inner: 2, spacing: 15, tickHalf: 4, anchorR: 3,
- dark: 0x2b2d31, light: 0x8b939c, anchor: 0x4a4f57,
-};
-const DEPTH = { placed: 5, chain: 6, ghost: 20, outline: 21, flash: 22, ui: 30, slot: 31 };
+/** Ground is a one-pixel line, so a ground click is accepted a few pixels above and below it. */
+const GROUND_CLICK_SLACK = 10;
+const DEPTH = { ghost: 20, outline: 21, flash: 22, ui: 30, slot: 31 };
 const HINTS: Record<BuildMode, string> = {
- idle: 'Click a junk slot, then click the arena. Right-click a placed piece to take it back.',
- placing: 'Left-click to place (needs ground or junk under it). Q/E rotate. Right-click cancels.',
- moving: 'Left-click to drop it here. Q/E rotate. DEL returns it.',
- chain: 'Click the first piece, then the second (max 220 px).',
+ idle: 'Pieces fall freely. Click junk to move it. Right-click junk to return it.',
+ placing: 'Click to place. Pieces fall until they land. Q/E rotate. Right-click cancels.',
+ moving: 'Click to move. Attached nails return to inventory. Q/E rotate. DEL returns the piece.',
+ chain: 'Click two pieces (max 220 px). Chains flex. Right-click cancels.',
+ nail: 'Click each side of a touching joint. One side can be ground. Nails lock the joint. Right-click cancels.',
 };
 
-/** Session counter: build ids stay unique across scene restarts and give the support graph stable keys. */
+/** Session counter: ids stay unique across scene restarts, so saved nails and chains keep a stable owner. */
 let idCounter = 0;
 
 function mono(scene: Phaser.Scene, x: number, y: number, text: string, fontSize: string, color: string) {
@@ -83,32 +90,10 @@ function strokeRotatedRect(
  g.strokeRect(-w / 2, -h / 2, w, h).restore();
 }
 
-/** Must stay in step with the wave's chain rendering: the player previews exactly what they get. */
-function drawChainStrand(g: Phaser.GameObjects.Graphics, ax: number, ay: number, bx: number, by: number): void {
- g.lineStyle(CHAIN_STYLE.line, CHAIN_STYLE.dark, 1).lineBetween(ax, ay, bx, by);
- g.lineStyle(CHAIN_STYLE.inner, CHAIN_STYLE.light, 1).lineBetween(ax, ay, bx, by);
-
- const dx = bx - ax;
- const dy = by - ay;
- const length = Math.hypot(dx, dy);
- if (length > CHAIN_STYLE.spacing) {
-  const ux = dx / length;
-  const uy = dy / length;
-  for (let d = CHAIN_STYLE.spacing * 0.5; d < length; d += CHAIN_STYLE.spacing) {
-   const px = ax + ux * d;
-   const py = ay + uy * d;
-   const tx = uy * CHAIN_STYLE.tickHalf;
-   const ty = ux * CHAIN_STYLE.tickHalf;
-   g.lineBetween(px - tx, py + ty, px + tx, py - ty);
-  }
- }
- g.fillStyle(CHAIN_STYLE.anchor, 1).fillCircle(ax, ay, CHAIN_STYLE.anchorR).fillCircle(bx, by, CHAIN_STYLE.anchorR);
-}
 
 export class BuildScene extends Phaser.Scene {
  readonly sceneKey = 'BuildScene';
 
- private chainLayer!: Phaser.GameObjects.Graphics;
  private chainPreview!: Phaser.GameObjects.Graphics;
  private outline!: Phaser.GameObjects.Graphics;
  private denyFlash!: Phaser.GameObjects.Graphics;
@@ -116,7 +101,7 @@ export class BuildScene extends Phaser.Scene {
  private hintText!: Phaser.GameObjects.Text;
  private slots: SlotView[] = [];
  private slotUi: Phaser.GameObjects.GameObject[] = [];
- private placedVisuals = new Map<string, Phaser.GameObjects.Image>();
+ private structureManager!: WaveStructureManager;
  private mode: BuildMode = 'idle';
  private selectedType: ItemType | null = null;
  private ghost: Phaser.GameObjects.Image | null = null;
@@ -126,6 +111,12 @@ export class BuildScene extends Phaser.Scene {
  /** Live runStore object being moved; the store keeps its original pose until the move commits. */
  private moving: SavedBuildObject | null = null;
  private chainFirst: PendingAnchor | null = null;
+ /** Build pauses the simulation while a piece is in hand or an endpoint is being picked. */
+ private physicsPaused = false;
+ private helpUi: Phaser.GameObjects.GameObject[] | null = null;
+ private guideText: Phaser.GameObjects.Text | null = null;
+ private guidePanel: Phaser.GameObjects.Rectangle | null = null;
+ private guideDismiss: Phaser.GameObjects.Text | null = null;
 
  constructor() {
   super('BuildScene');
@@ -134,20 +125,25 @@ export class BuildScene extends Phaser.Scene {
  create(): void {
   // create() can run again on scene restart, so every editor field is reset here.
   this.mode = 'idle'; this.selectedType = null; this.moving = null; this.chainFirst = null;
-  this.ghostRotation = 0; this.ghost = null; this.slots = []; this.slotUi = []; this.placedVisuals.clear();
+  this.ghostRotation = 0; this.ghost = null; this.slots = []; this.slotUi = [];
+  this.physicsPaused = false;
+  this.helpUi = null; this.guideText = null; this.guidePanel = null; this.guideDismiss = null;
 
   drawArena(this);
   drawBuildZone(this);
-  this.chainLayer = this.add.graphics().setDepth(DEPTH.chain);
+  createArenaPhysics(this);
+  // A restart inherits the previous world state, so build always starts with the simulation running.
+  this.matter.world.resume();
   this.chainPreview = this.add.graphics().setDepth(DEPTH.ghost);
   this.outline = this.add.graphics().setDepth(DEPTH.outline);
   this.denyFlash = this.add.graphics().setDepth(DEPTH.flash);
   this.fx = new Effects(this);
+  this.structureManager = new WaveStructureManager(this, { effects: this.fx });
+  this.structureManager.syncBuild();
   this.buildChrome();
-  for (const obj of runStore.get().placedObjects) this.spawnVisual(obj);
   this.renderInventory();
-  this.drawChains();
   this.hintText.setText(HINTS[this.mode]);
+  this.maybeShowGuide();
 
   this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => this.onPointerMove(pointer.x, pointer.y));
   this.input.on('pointerdown', (pointer: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) =>
@@ -160,10 +156,26 @@ export class BuildScene extends Phaser.Scene {
   keys?.on('keydown-DELETE', () => this.returnMovingToInventory());
   keys?.on('keydown-BACKSPACE', () => this.returnMovingToInventory());
   keys?.on('keydown-ENTER', () => this.startWave());
-  keys?.on('keydown-ESC', () => showPauseMenu(this));
+  keys?.on('keydown-ESC', () => {
+   if (this.helpUi) this.closeHelp();
+   else showPauseMenu(this);
+  });
 
   setDebugProvider(this);
-  this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => setDebugProvider(null));
+  this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+   this.structureManager.syncBuildPoses();
+   this.structureManager.dispose();
+   setDebugProvider(null);
+  });
+ }
+
+ update(): void {
+  this.structureManager.update();
+  this.structureManager.syncBuildPoses();
+  if (this.mode === 'placing') {
+   const pointer = this.input.activePointer;
+   this.updateGhostAt(pointer.x, pointer.y);
+  }
  }
 
  private buildChrome(): void {
@@ -184,11 +196,14 @@ export class BuildScene extends Phaser.Scene {
   const menu = mono(this, GAME_WIDTH - 60, 28, '[ MENU ]', '16px', '#e8e0d0');
   menu.setOrigin(0.5).setPadding(12, 8).setDepth(DEPTH.ui).setInteractive({ useHandCursor: true });
   menu.on('pointerdown', () => showPauseMenu(this));
+  const help = mono(this, GAME_WIDTH - 180, 28, '[ HELP ]', '16px', '#c8c2b8');
+  help.setOrigin(0.5).setPadding(12, 8).setDepth(DEPTH.ui).setInteractive({ useHandCursor: true });
+  help.on('pointerdown', () => this.openHelp());
  }
 
  private onPointerMove(x: number, y: number): void {
-  if (this.mode === 'chain') {
-   this.updateChainPreview(x, y);
+  if (this.mode === 'chain' || this.mode === 'nail') {
+   this.updateAttachmentPreview(x, y);
    return;
   }
   this.updateGhostAt(x, y);
@@ -197,6 +212,7 @@ export class BuildScene extends Phaser.Scene {
  private onPointerDown(pointer: Phaser.Input.Pointer, overUi: boolean): void {
   sfx.unlock();
   if (overUi) return;
+  this.structureManager.syncBuildPoses();
   const x = pointer.x;
   const y = pointer.y;
   if (pointer.rightButtonDown()) {
@@ -205,7 +221,7 @@ export class BuildScene extends Phaser.Scene {
   }
   if (this.mode === 'placing') this.tryPlace(x, y);
   else if (this.mode === 'moving') this.tryCommitMove(x, y);
-  else if (this.mode === 'chain') this.chainClick(x, y);
+  else if (this.mode === 'chain' || this.mode === 'nail') this.attachmentClick(x, y);
   else {
    const hit = this.hitTestObject(x, y);
    if (hit) this.startMoving(hit, x, y);
@@ -228,6 +244,7 @@ export class BuildScene extends Phaser.Scene {
    return;
   }
   this.selectedType = type;
+  this.structureManager.syncBuildPoses();
   this.chainFirst = null;
   this.ghostRotation = 0;
   this.ghost?.destroy();
@@ -235,10 +252,12 @@ export class BuildScene extends Phaser.Scene {
   this.chainPreview.clear();
   this.outline.clear();
 
-  if (type === 'chain') {
-   this.mode = 'chain';
+  if (type === 'chain' || type === 'nail') {
+   this.mode = type;
+   this.setPhysicsPaused(true);
   } else {
    this.mode = 'placing';
+   this.setPhysicsPaused(false);
    this.ghost = this.add.image(0, 0, type).setAlpha(0.55).setDepth(DEPTH.ghost);
    const pointer = this.input.activePointer;
    this.updateGhostAt(pointer.x, pointer.y);
@@ -261,15 +280,15 @@ export class BuildScene extends Phaser.Scene {
   const candidate: SavedBuildObject = {
    id: `build-obj-${++idCounter}`, type, x, y, rotation: this.ghostRotation, hp: def.maxHp,
   };
-  const result = placementCheck(candidate, runStore.get().placedObjects, runStore.get().chains);
+  const result = placementCheck(candidate, runStore.get().placedObjects);
   if (!result.valid) {
    this.lastRejection = result.violations.join(',');
-   this.deny((g) => strokeRotatedRect(g, x, y, def.width, def.height, this.ghostRotation, COLOR_INVALID, 3), REJECTION_TEXT[result.violations[0] ?? 'unsupported'], x, y);
+   this.deny((g) => strokeRotatedRect(g, x, y, def.width, def.height, this.ghostRotation, COLOR_INVALID, 3), REJECTION_TEXT[result.violations[0] ?? 'outside-zone'], x, y);
    return;
   }
   this.lastRejection = null;
   runStore.setPlacedObjects([...runStore.get().placedObjects, candidate]);
-  this.spawnVisual(candidate);
+  this.structureManager.syncBuild();
   sfx.place();
   this.consumeSelected();
   this.renderInventory();
@@ -277,13 +296,15 @@ export class BuildScene extends Phaser.Scene {
  }
 
  private startMoving(obj: SavedBuildObject, x: number, y: number): void {
+  this.structureManager.syncBuildPoses();
+  this.setPhysicsPaused(true);
   this.moving = obj;
   this.chainFirst = null;
   this.ghostRotation = obj.rotation;
   this.mode = 'moving';
   this.ghost?.destroy();
   this.ghost = this.add.image(x, y, obj.type).setAlpha(0.55).setDepth(DEPTH.ghost);
-  this.placedVisuals.get(obj.id)?.setVisible(false);
+  this.structureManager.getObjectImage(obj.id)?.setVisible(false);
   this.updateGhostAt(x, y);
   this.updateHint();
  }
@@ -301,17 +322,19 @@ export class BuildScene extends Phaser.Scene {
    return;
   }
   const candidate: SavedBuildObject = { ...obj, x, y, rotation: this.ghostRotation };
-  const moveResult = placementCheck(candidate, runStore.get().placedObjects, runStore.get().chains);
+  const moveResult = placementCheck(candidate, runStore.get().placedObjects);
   if (!moveResult.valid) {
    const def = ITEM_DEFINITIONS[obj.type];
-   this.deny((g) => strokeRotatedRect(g, x, y, def.width, def.height, this.ghostRotation, COLOR_INVALID, 3), REJECTION_TEXT[moveResult.violations[0] ?? 'unsupported'], x, y);
+   this.deny((g) => strokeRotatedRect(g, x, y, def.width, def.height, this.ghostRotation, COLOR_INVALID, 3), REJECTION_TEXT[moveResult.violations[0] ?? 'outside-zone'], x, y);
    return;
   }
+  this.refundNails(obj.id);
   obj.x = x;
   obj.y = y;
   obj.rotation = this.ghostRotation;
+  this.structureManager.syncBuild();
   sfx.place();
-  this.cancelToIdle(); // re-projects the visual from the store, so the move shows up in place
+  this.cancelToIdle();
  }
 
  private returnMovingToInventory(): void {
@@ -323,62 +346,114 @@ export class BuildScene extends Phaser.Scene {
   const obj = run.placedObjects.find((o) => o.id === id);
   if (!obj) return;
   const attached = run.chains.filter((c) => c.anchorA.objectId === id || c.anchorB.objectId === id);
+  // Nails go back first: removing the object drops its dangling nails without a refund.
+  this.refundNails(id);
   runStore.setPlacedObjects(run.placedObjects.filter((o) => o.id !== id));
-  this.placedVisuals.get(id)?.destroy();
-  this.placedVisuals.delete(id);
   for (const chain of attached) {
    runStore.removeChain(chain.id);
    runStore.addInventoryItem('chain');
   }
   runStore.addInventoryItem(obj.type);
+  this.structureManager.syncBuild();
   sfx.place();
   this.cancelToIdle();
  }
 
- private chainClick(x: number, y: number): void {
-  const hit = this.hitTestObject(x, y);
-  if (!hit) {
-   this.deny((g) => g.lineStyle(3, COLOR_INVALID, 1).strokeCircle(x, y, 12));
-   return;
-  }
+ /**
+  * A nail endpoint is the clicked point itself: the joint it describes is where the two pieces meet,
+  * so the click must land on one of them. Ground is a valid endpoint while the nail has no other.
+  */
+ private attachmentAnchorAt(x: number, y: number): PendingAnchor | null {
+  const nail = this.mode === 'nail';
   const first = this.chainFirst;
+  const hit = this.hitTestObject(x, y, nail ? first?.objectId : undefined);
+  if (hit) return { objectId: hit.id, x, y };
+  const groundFree = !first || first.objectId !== GROUND_ANCHOR_ID;
+  if (nail && groundFree && Math.abs(y - GROUND_Y) <= GROUND_CLICK_SLACK) {
+   return { objectId: GROUND_ANCHOR_ID, x, y: GROUND_Y };
+  }
+  return null;
+ }
+
+ private attachmentClick(x: number, y: number): void {
+  this.structureManager.syncBuildPoses();
+  this.setPhysicsPaused(true);
+  const first = this.chainFirst;
+  const anchor = this.attachmentAnchorAt(x, y);
+  if (!anchor) {
+   const groundPicked = first?.objectId === GROUND_ANCHOR_ID;
+   this.deny(
+    (g) => g.lineStyle(3, COLOR_INVALID, 1).strokeCircle(x, y, 12),
+    this.attachmentMissText(groundPicked),
+    x,
+    y,
+   );
+   return;
+  }
   if (!first) {
-   this.chainFirst = { objectId: hit.id, x, y };
-   this.updateChainPreview(x, y);
+   this.chainFirst = anchor;
+   this.updateAttachmentPreview(x, y);
+   this.updateHint();
    return;
   }
-  const chainCheck = chainPlacementCheck(first, { objectId: hit.id, x, y }, runStore.get().placedObjects);
-  if (!chainCheck.valid) {
-   this.deny((g) => g.lineStyle(4, COLOR_INVALID, 1).lineBetween(first.x, first.y, x, y), CHAIN_TEXT[chainCheck.violation ?? 'too-long'], x, y);
-   return; // anchor A stays pending so the player can retry the second end
-  }
-  const objA = runStore.get().placedObjects.find((o) => o.id === first.objectId);
-  if (!objA) {
-   this.chainFirst = null;
+  const nail = this.mode === 'nail';
+  const check = nail
+   ? nailPlacementCheck(first, anchor, runStore.get().placedObjects)
+   : chainPlacementCheck(first, anchor, runStore.get().placedObjects);
+  if (!check.valid) {
+   this.lastRejection = check.violation;
+   this.deny(
+    (g) => g.lineStyle(4, COLOR_INVALID, 1).lineBetween(first.x, first.y, anchor.x, anchor.y),
+    attachRejection(check.violation, nail),
+    x,
+    y,
+   );
    return;
   }
-  const anchorA = { objectId: first.objectId, x: first.x - objA.x, y: first.y - objA.y };
-  const anchorB = { objectId: hit.id, x: x - hit.x, y: y - hit.y };
-  runStore.addChain({ id: `build-chain-${++idCounter}`, anchorA, anchorB, hp: CHAIN_MAX_HP });
+  const savedAnchor = (point: PendingAnchor): ChainAnchor => {
+   const obj = runStore.get().placedObjects.find((o) => o.id === point.objectId);
+   return { objectId: point.objectId, x: point.x - (obj?.x ?? 0), y: point.y - (obj?.y ?? 0) };
+  };
+  const anchorA = savedAnchor(first);
+  const anchorB = savedAnchor(anchor);
+  if (nail) runStore.addNail({ id: `build-nail-${++idCounter}`, anchorA, anchorB });
+  else runStore.addChain({ id: `build-chain-${++idCounter}`, anchorA, anchorB, hp: CHAIN_MAX_HP });
+  this.lastRejection = null;
   this.chainFirst = null;
   this.chainPreview.clear();
+  this.structureManager.syncBuild();
   sfx.place();
   this.consumeSelected();
+  this.setPhysicsPaused(false);
   this.renderInventory();
-  this.drawChains();
   this.updateHint();
  }
 
- private updateChainPreview(x: number, y: number): void {
+ private attachmentMissText(groundPicked: boolean): string {
+  if (this.mode !== 'nail') return 'click a piece of junk';
+  return groundPicked ? 'now click the piece resting on the ground'
+   : 'click junk or the ground where the two parts touch';
+ }
+
+ private updateAttachmentPreview(x: number, y: number): void {
   const preview = this.chainPreview;
   preview.clear();
   const first = this.chainFirst;
   if (!first) return;
-  const hit = this.hitTestObject(x, y);
-  const valid = !!hit && chainPlacementCheck(first, { objectId: hit.id, x, y }, runStore.get().placedObjects).valid;
+  const anchor = this.attachmentAnchorAt(x, y);
+  const valid = !!anchor && (this.mode === 'nail'
+   ? nailPlacementCheck(first, anchor, runStore.get().placedObjects)
+   : chainPlacementCheck(first, anchor, runStore.get().placedObjects)).valid;
   const color = valid ? COLOR_VALID : COLOR_INVALID;
-  preview.lineStyle(5, color, 0.9).lineBetween(first.x, first.y, x, y);
-  preview.fillStyle(color, 1).fillCircle(first.x, first.y, 5).fillCircle(x, y, 4);
+  preview.lineStyle(3, color, 0.9).lineBetween(first.x, first.y, anchor?.x ?? x, anchor?.y ?? y);
+  preview.fillStyle(color, 1).fillCircle(first.x, first.y, 5).fillCircle(anchor?.x ?? x, anchor?.y ?? y, 4);
+ }
+
+ private refundNails(objectId: string): void {
+  for (const nail of runStore.get().nails.filter((n) => n.anchorA.objectId === objectId || n.anchorB.objectId === objectId)) {
+   runStore.removeNail(nail.id);
+   runStore.addInventoryItem('nail');
+  }
  }
 
  private consumeSelected(): void {
@@ -398,14 +473,18 @@ export class BuildScene extends Phaser.Scene {
   this.ghost = null;
   this.outline.clear();
   this.chainPreview.clear();
-  // Single place where the view mirrors the model: placed images always match their store object.
-  for (const obj of runStore.get().placedObjects) {
-   const image = this.placedVisuals.get(obj.id);
-   image?.setPosition(obj.x, obj.y).setRotation(Phaser.Math.DegToRad(obj.rotation)).setVisible(true);
-  }
+  for (const obj of runStore.get().placedObjects) this.structureManager.getObjectImage(obj.id)?.setVisible(true);
+  this.setPhysicsPaused(false);
   this.renderInventory();
-  this.drawChains();
   this.updateHint();
+ }
+
+ /** One switch for the simulation: pieces in hand and pending endpoints must not drift. */
+ private setPhysicsPaused(paused: boolean): void {
+  if (paused === this.physicsPaused) return;
+  this.physicsPaused = paused;
+  if (paused) this.matter.world.pause();
+  else this.matter.world.resume();
  }
 
  private updateGhostAt(x: number, y: number): void {
@@ -418,7 +497,7 @@ export class BuildScene extends Phaser.Scene {
   const candidate: SavedBuildObject = {
    id: moving?.id ?? 'ghost', type, x, y, rotation: this.ghostRotation, hp: def.maxHp,
   };
-  const valid = placementCheck(candidate, runStore.get().placedObjects, runStore.get().chains).valid;
+  const valid = placementCheck(candidate, runStore.get().placedObjects).valid;
   const color = valid ? COLOR_VALID : COLOR_INVALID;
   this.outline.clear();
   strokeRotatedRect(this.outline, x, y, def.width, def.height, this.ghostRotation, color, 2);
@@ -440,7 +519,7 @@ export class BuildScene extends Phaser.Scene {
   this.slotUi = [];
   this.slots = [];
 
-  const counts: Record<ItemType, number> = { plank: 0, metal_sheet: 0, chain: 0, anvil: 0 };
+  const counts: Record<ItemType, number> = { plank: 0, metal_sheet: 0, chain: 0, nail: 0, anvil: 0 };
   for (const item of runStore.get().inventory) counts[item.type] += 1;
 
   // Fixed order: slots must never reshuffle under the pointer as junk is spent.
@@ -464,32 +543,22 @@ export class BuildScene extends Phaser.Scene {
    this.slotUi.push(rect, icon, label, badge);
    this.slots.push({ index, type, count, x: SLOT_X - SLOT_W / 2, y: cy - SLOT_H / 2, w: SLOT_W, h: SLOT_H });
   });
+  this.updateGuide();
  }
 
- private spawnVisual(obj: SavedBuildObject): void {
-  const image = this.add.image(obj.x, obj.y, obj.type);
-  image.setRotation(Phaser.Math.DegToRad(obj.rotation)).setDepth(DEPTH.placed);
-  this.placedVisuals.set(obj.id, image);
- }
-
- private drawChains(): void {
-  const layer = this.chainLayer;
-  layer.clear();
-  for (const chain of runStore.get().chains) {
-   const a = runStore.get().placedObjects.find((o) => o.id === chain.anchorA.objectId);
-   const b = runStore.get().placedObjects.find((o) => o.id === chain.anchorB.objectId);
-   if (!a || !b) continue;
-   drawChainStrand(layer, a.x + chain.anchorA.x, a.y + chain.anchorA.y, b.x + chain.anchorB.x, b.y + chain.anchorB.y);
-  }
- }
-
- private hitTestObject(x: number, y: number): SavedBuildObject | null {
+ private hitTestObject(x: number, y: number, excludeId?: string, tolerance = 0): SavedBuildObject | null {
   let best: SavedBuildObject | null = null;
   let bestDist = Infinity;
   for (const obj of runStore.get().placedObjects) {
-   const rect = objectRect(obj, ITEM_DEFINITIONS[obj.type]);
-   if (x < rect.x || x > rect.x + rect.width || y < rect.y || y > rect.y + rect.height) continue;
-   const dist = (obj.x - x) ** 2 + (obj.y - y) ** 2;
+   if (obj.id === excludeId) continue;
+   const def = ITEM_DEFINITIONS[obj.type];
+   const angle = Phaser.Math.DegToRad(obj.rotation);
+   const dx = x - obj.x;
+   const dy = y - obj.y;
+   const localX = dx * Math.cos(angle) + dy * Math.sin(angle);
+   const localY = dy * Math.cos(angle) - dx * Math.sin(angle);
+   if (Math.abs(localX) > def.width / 2 + tolerance || Math.abs(localY) > def.height / 2 + tolerance) continue;
+   const dist = dx * dx + dy * dy;
    if (dist < bestDist) {
     bestDist = dist;
     best = obj;
@@ -499,10 +568,84 @@ export class BuildScene extends Phaser.Scene {
  }
 
  private updateHint(): void {
-  this.hintText.setText(HINTS[this.mode]);
+  const picking = this.chainFirst !== null && (this.mode === 'chain' || this.mode === 'nail');
+  if (!picking) {
+   this.hintText.setText(HINTS[this.mode]);
+   return;
+  }
+  this.hintText.setText(this.mode === 'nail'
+   ? 'Click the other side of this joint, or the touching ground. Right-click cancels.'
+   : 'Click the second piece. Right-click cancels.');
+ }
+
+ private openHelp(): void {
+  if (this.helpUi) return;
+  sfx.unlock();
+  this.structureManager.syncBuildPoses();
+  this.setPhysicsPaused(true);
+  this.helpUi = showHowTo(this, () => this.closeHelp());
+ }
+
+ private closeHelp(): void {
+  markHowToSeen();
+  for (const obj of this.helpUi ?? []) obj.destroy();
+  this.helpUi = null;
+  if (this.mode !== 'moving' && !this.chainFirst) this.setPhysicsPaused(false);
+ }
+
+ /** First run only: a 5-step checklist that ticks itself off as the fort takes shape. */
+ private maybeShowGuide(): void {
+  if (hasSeenHowTo()) return;
+  const panel = this.add.rectangle(236, 148, 448, 132, 0x101010, 0.92);
+  // Interactive so arena clicks landing on the panel never place junk behind it.
+  panel.setStrokeStyle(1, 0x3a3a3a).setDepth(DEPTH.ui).setInteractive();
+  this.guidePanel = panel;
+  this.guideText = mono(this, 32, 94, '', '12px', '#b8b2b6').setDepth(DEPTH.slot);
+  const dismiss = mono(this, 428, 88, '[ x ]', '12px', '#77726a').setDepth(DEPTH.slot);
+  dismiss.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+   markHowToSeen();
+   this.hideGuide();
+  });
+  this.guideDismiss = dismiss;
+  this.updateGuide();
+ }
+
+ private updateGuide(): void {
+  const text = this.guideText;
+  if (!text) return;
+  const placed = runStore.get().placedObjects.length;
+  const chained = runStore.get().chains.length > 0;
+  const nailed = runStore.get().nails.length > 0;
+  text.setText(
+   [
+    'FIRST FORT - zombies enter right, guard the CORE:',
+    `${placed > 0 ? '[x]' : '[ ]'} 1. Click junk (right), click arena - it falls`,
+    `${placed >= 3 ? '[x]' : '[ ]'} 2. Place ${placed >= 3 ? '3/3' : `${placed}/3`} pieces - Q/E angles metal`,
+    `${nailed ? '[x]' : '[ ]'} 3. Nail two touching pieces, or nail junk to ground`,
+    `${chained ? '[x]' : '[ ]'} 4. Chain is the flex tie - anvil overhead = drop trap`,
+    '[ ] 5. START WAVE (top) when ready',
+   ].join('\n'),
+  );
+ }
+
+ private hideGuide(): void {
+  this.guideText?.destroy();
+  this.guidePanel?.destroy();
+  this.guideDismiss?.destroy();
+  this.guideText = null;
+  this.guidePanel = null;
+  this.guideDismiss = null;
  }
 
  private startWave(): void {
+  if (this.helpUi) {
+   this.closeHelp();
+   return;
+  }
+  this.cancelToIdle();
+  this.structureManager.syncBuildPoses();
+  this.hideGuide();
+  markHowToSeen();
   sfx.unlock();
   runStore.setPhase('wave');
   // Explicit empty payload: Phaser keeps the previous scene data, which would silently re-run a
@@ -511,16 +654,21 @@ export class BuildScene extends Phaser.Scene {
  }
 
  state(): Record<string, unknown> {
+  this.structureManager.syncBuildPoses();
   const run = runStore.get();
   return {
    scene: 'build', phase: run.phase, seed: run.seed,
-   inventoryCount: run.inventory.length, placedCount: run.placedObjects.length, chainCount: run.chains.length,
+   inventoryCount: run.inventory.length, placedCount: run.placedObjects.length, chainCount: run.chains.length, nailCount: run.nails.length,
    mode: this.mode,
    selected: this.selectedType,
+   helpOpen: this.helpUi !== null,
    ghostRotation: this.ghostRotation,
    lastRejection: this.lastRejection,
    placed: run.placedObjects.map((o) => ({ id: o.id, type: o.type, x: o.x, y: o.y, rotation: o.rotation, hp: o.hp })),
    chains: run.chains.map((c) => ({ id: c.id, a: c.anchorA.objectId, b: c.anchorB.objectId, hp: c.hp })),
+   nails: run.nails.map((n) => ({ id: n.id, a: n.anchorA.objectId, b: n.anchorB.objectId, anchorA: n.anchorA, anchorB: n.anchorB })),
+   pendingAnchor: this.chainFirst,
+   physicsPaused: this.physicsPaused,
    slots: this.slots.map((s) => ({ index: s.index, type: s.type, count: s.count, x: s.x, y: s.y, w: s.w, h: s.h })),
    startButton: {
     x: START_BTN.x - START_BTN.w / 2, y: START_BTN.y - START_BTN.h / 2, w: START_BTN.w, h: START_BTN.h,

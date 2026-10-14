@@ -1,4 +1,5 @@
 import type {
+  ChainAnchor,
   InventoryItem,
   ItemType,
   KillSource,
@@ -7,11 +8,23 @@ import type {
   RunState,
   SavedBuildObject,
   SavedChain,
+  SavedNail,
 } from '../types/game';
 import { createInitialRunState, createInventoryItem } from '../data/gameData';
 import { DEFAULT_SEED } from '../utils/rng';
+import { GROUND_ANCHOR_ID } from '../utils/Constants';
 
 let runState: RunState = createInitialRunState(DEFAULT_SEED);
+
+/** A nail survives only while both of its objects survive. Ground anchors have no object. */
+function anchorAlive(anchor: ChainAnchor): boolean {
+  return anchor.objectId === GROUND_ANCHOR_ID
+    || runState.placedObjects.some((obj) => obj.id === anchor.objectId);
+}
+
+function dropDanglingNails(): void {
+  runState.nails = runState.nails.filter((nail) => anchorAlive(nail.anchorA) && anchorAlive(nail.anchorB));
+}
 
 export const runStore = {
   get(): RunState {
@@ -35,6 +48,7 @@ export const runStore = {
 
   setPlacedObjects(objects: SavedBuildObject[]): void {
     runState.placedObjects = objects;
+    dropDanglingNails();
   },
 
   updateObjectHp(id: string, hp: number): void {
@@ -53,6 +67,14 @@ export const runStore = {
   updateChainHp(id: string, hp: number): void {
     const chain = runState.chains.find((c) => c.id === id);
     if (chain) chain.hp = Math.max(0, Math.floor(hp));
+  },
+
+  addNail(nail: SavedNail): void {
+    runState.nails.push(nail);
+  },
+
+  removeNail(id: string): void {
+    runState.nails = runState.nails.filter((n) => n.id !== id);
   },
 
   damageCore(amount: number): void {
@@ -81,6 +103,7 @@ export const runStore = {
   recordStructureLost(id: string): void {
     runState.stats.structuresLost += 1;
     runState.placedObjects = runState.placedObjects.filter((p) => p.id !== id);
+    dropDanglingNails();
   },
 
   setPhase(phase: Phase): void {

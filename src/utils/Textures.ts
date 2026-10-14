@@ -188,6 +188,29 @@ function drawAnvil(scene: Phaser.Scene): void {
   grain(tex, 8, 2, 2);
 }
 
+/** Nail head lower left, shaft driven up and right: the angle reads as "driven into" at slot size. */
+function drawNail(scene: Phaser.Scene): void {
+  const tex = paint(scene, 'nail', 18, 18, (g) => {
+    poly(g, [{ x: 5, y: 12 }, { x: 15.5, y: 3.5 }, { x: 7, y: 14 }], STEEL);
+    poly(g, [{ x: 8.6, y: 14.4 }, { x: 2.7, y: 9.1 }, { x: 1.4, y: 10.6 }, { x: 7.3, y: 15.9 }], STEEL_DARK);
+
+    g.lineStyle(1, STEEL_LIT, 0.9);
+    g.lineBetween(7, 12, 14, 4.5);
+    g.lineBetween(3, 9.8, 7.4, 14.6);
+    g.lineStyle(1, 0x2b3037, 0.9);
+    g.lineBetween(6, 14.6, 15.6, 4);
+
+    // Rust blooms near the tip, where a used nail would pit first.
+    g.fillStyle(RUST, 0.6);
+    g.fillRect(11, 5, 4, 2);
+    g.fillRect(5, 10, 3, 2);
+    g.fillStyle(0xa16a42, 0.5);
+    g.fillRect(12, 6, 2, 1);
+  });
+
+  grain(tex, 6, 2, 2);
+}
+
 function drawChain(scene: Phaser.Scene): void {
   const tex = paint(scene, 'chain', 24, 24, (g) => {
     const link = (cx: number, cy: number, w: number, h: number) => {
@@ -550,6 +573,7 @@ export function createTextures(scene: Phaser.Scene): void {
   drawMetalSheet(scene);
   drawAnvil(scene);
   drawChain(scene);
+  drawNail(scene);
   drawDamage(scene);
   drawZombie(scene);
   drawPlayer(scene);

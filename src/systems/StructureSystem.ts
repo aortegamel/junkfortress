@@ -1,12 +1,14 @@
 import type { ItemDefinition } from '../data/items';
 import { ITEM_DEFINITIONS } from '../data/items';
-import type { ItemType, SavedBuildObject, SavedChain } from '../types/game';
+import type { ChainAnchor, ItemType, SavedBuildObject, SavedNail } from '../types/game';
 import {
  BUILD_ZONE,
  CHAIN_MAX_LENGTH,
  CORE_RECT,
+ GROUND_ANCHOR_ID,
  GROUND_Y,
- SUPPORT_EPSILON,
+ NAIL_MAX_LENGTH,
+ CONTACT_EPSILON,
 } from '../utils/Constants';
 
 export interface Rect {
@@ -16,13 +18,7 @@ export interface Rect {
  height: number;
 }
 
-export const STRUCTURAL_TYPES: ItemType[] = ['plank', 'metal_sheet'];
-
-/**
- * Objects must be able to REST on each other: support is a rect intersection, so a beam laid on a
- * post only needs to touch it, and demanding sub-pixel precision there makes stacking miserable.
- * Penetrations up to this many pixels are treated as contact, not interpenetration.
- */
+/** Allow shallow contact while the physics solver separates placed pieces. */
 export const PLACEMENT_OVERLAP_TOLERANCE = 4;
 
 /** A piece as an oriented rectangle: a rotated plank is a thin diagonal, nothing like its box. */
@@ -100,84 +96,35 @@ export function insideRect(r: Rect, outer: Rect, epsilon = 0): boolean {
  );
 }
 
-export function rectTouchesRoot(r: Rect): boolean {
- if (r.y + r.height >= GROUND_Y - SUPPORT_EPSILON) return true;
- return rectIntersects(r, CORE_RECT, SUPPORT_EPSILON);
-}
-
-export function chainParticipates(chain: SavedChain, objectIds: Set<string>): boolean {
- return (
-  chain.hp > 0 &&
-  chain.anchorA.objectId !== chain.anchorB.objectId &&
-  objectIds.has(chain.anchorA.objectId) &&
-  objectIds.has(chain.anchorB.objectId)
- );
-}
-
-export interface SupportResult {
- supported: Set<string>;
- aliveChains: SavedChain[];
- deadChains: SavedChain[];
-}
-
-export function computeSupport(
- placedObjects: SavedBuildObject[],
- chains: SavedChain[],
- defs: Record<ItemType, ItemDefinition> = ITEM_DEFINITIONS,
-): SupportResult {
- const objectIds = new Set(placedObjects.map((o) => o.id));
+/** Only nail edges propagate a fixed ground connection. Chains never freeze their loads. */
+export function groundedNailObjects(objects: SavedBuildObject[], nails: SavedNail[]): Set<string> {
+ const ids = new Set(objects.map((obj) => obj.id));
  const edges = new Map<string, string[]>();
- const addEdge = (a: string, b: string): void => {
+ for (const nail of nails) {
+  const a = nail.anchorA.objectId;
+  const b = nail.anchorB.objectId;
+  if (a === b || (a !== GROUND_ANCHOR_ID && !ids.has(a)) || (b !== GROUND_ANCHOR_ID && !ids.has(b))) continue;
   if (!edges.has(a)) edges.set(a, []);
   if (!edges.has(b)) edges.set(b, []);
   edges.get(a)!.push(b);
   edges.get(b)!.push(a);
- };
-
- for (const a of placedObjects) {
-  for (const b of placedObjects) {
-   if (a.id >= b.id) continue;
-   if (rectIntersects(objectRect(a, defs[a.type]), objectRect(b, defs[b.type]), SUPPORT_EPSILON)) {
-    addEdge(a.id, b.id);
-   }
-  }
  }
-
- for (const chain of chains) {
-  if (!chainParticipates(chain, objectIds)) continue;
-  edges.set(chain.id, []);
-  addEdge(chain.id, chain.anchorA.objectId);
-  addEdge(chain.id, chain.anchorB.objectId);
- }
-
- const supported = new Set<string>();
- const queue: string[] = [];
- for (const o of placedObjects) {
-  if (rectTouchesRoot(objectRect(o, defs[o.type]))) {
-   supported.add(o.id);
-   queue.push(o.id);
-  }
- }
+ const grounded = new Set<string>();
+ const queue = [GROUND_ANCHOR_ID];
  while (queue.length > 0) {
-  const cur = queue.pop()!;
-  for (const next of edges.get(cur) ?? []) {
-   if (!supported.has(next)) {
-    supported.add(next);
-    queue.push(next);
-   }
+  for (const id of edges.get(queue.pop()!) ?? []) {
+   if (id === GROUND_ANCHOR_ID || grounded.has(id)) continue;
+   grounded.add(id);
+   queue.push(id);
   }
  }
-
- const aliveChains = chains.filter((c) => chainParticipates(c, objectIds) && supported.has(c.id));
- const deadChains = chains.filter((c) => !(chainParticipates(c, objectIds) && supported.has(c.id)));
- return { supported, aliveChains, deadChains };
+ return grounded;
 }
 
 export type PlacementViolation =
  | 'outside-zone'
  | 'overlaps-core'
- | 'overlaps-object'
- | 'unsupported';
+ | 'overlaps-object';
 
 export interface PlacementResult {
  valid: boolean;
@@ -187,7 +134,6 @@ export interface PlacementResult {
 export function placementCheck(
  candidate: SavedBuildObject,
  placedObjects: SavedBuildObject[],
- chains: SavedChain[],
  defs: Record<ItemType, ItemDefinition> = ITEM_DEFINITIONS,
 ): PlacementResult {
  const violations: PlacementViolation[] = [];
@@ -205,16 +151,13 @@ export function placementCheck(
   }
  }
 
- if (STRUCTURAL_TYPES.includes(candidate.type)) {
-  const simulated = placedObjects.filter((o) => o.id !== candidate.id).concat(candidate);
-  const { supported } = computeSupport(simulated, chains, defs);
-  if (!supported.has(candidate.id)) violations.push('unsupported');
- }
-
  return { valid: violations.length === 0, violations };
 }
 
 export type ChainViolation = 'same-object' | 'too-long' | 'missing-object';
+
+/** Nails add the joint itself to the reasons a chain already knows. */
+export type NailViolation = ChainViolation | 'not-touching' | 'outside-object';
 
 export function chainPlacementCheck(
  a: { objectId: string; x: number; y: number },
@@ -225,5 +168,45 @@ export function chainPlacementCheck(
  const exists = (id: string): boolean => placedObjects.some((o) => o.id === id);
  if (!exists(a.objectId) || !exists(b.objectId)) return { valid: false, violation: 'missing-object' };
  if (Math.hypot(b.x - a.x, b.y - a.y) > CHAIN_MAX_LENGTH) return { valid: false, violation: 'too-long' };
+ return { valid: true, violation: null };
+}
+
+/** Placement endpoints use world coordinates. Saved endpoints use offsets from the object center. */
+export function nailPlacementCheck(
+ a: ChainAnchor,
+ b: ChainAnchor,
+ placedObjects: SavedBuildObject[],
+): { valid: boolean; violation: NailViolation | null } {
+ if (a.objectId === b.objectId) return { valid: false, violation: 'same-object' };
+ const objectA = placedObjects.find((obj) => obj.id === a.objectId);
+ const objectB = placedObjects.find((obj) => obj.id === b.objectId);
+ const groundA = a.objectId === GROUND_ANCHOR_ID;
+ const groundB = b.objectId === GROUND_ANCHOR_ID;
+ if ((!groundA && !objectA) || (!groundB && !objectB)) return { valid: false, violation: 'missing-object' };
+ if (!Number.isFinite(a.x + a.y + b.x + b.y)) return { valid: false, violation: 'outside-object' };
+ if (Math.hypot(b.x - a.x, b.y - a.y) > NAIL_MAX_LENGTH) return { valid: false, violation: 'too-long' };
+ const onObject = (point: ChainAnchor, obj: SavedBuildObject): boolean => {
+  const rect = orientedRect(obj, ITEM_DEFINITIONS[obj.type]);
+  const dx = point.x - obj.x;
+  const dy = point.y - obj.y;
+  return Math.abs(dx * rect.ux + dy * rect.uy) <= rect.halfW + CONTACT_EPSILON &&
+   Math.abs(dy * rect.ux - dx * rect.uy) <= rect.halfH + CONTACT_EPSILON;
+ };
+ if ((objectA && !onObject(a, objectA)) || (objectB && !onObject(b, objectB))) {
+  return { valid: false, violation: 'outside-object' };
+ }
+ if (groundA || groundB) {
+  const point = groundA ? a : b;
+  const obj = (groundA ? objectB : objectA)!;
+  const rect = objectRect(obj, ITEM_DEFINITIONS[obj.type]);
+  if (Math.abs(point.y - GROUND_Y) > CONTACT_EPSILON ||
+   Math.abs(rect.y + rect.height - GROUND_Y) > CONTACT_EPSILON ||
+   !onObject(point, obj)) return { valid: false, violation: 'not-touching' };
+ } else if (orientedPenetration(
+  orientedRect(objectA!, ITEM_DEFINITIONS[objectA!.type]),
+  orientedRect(objectB!, ITEM_DEFINITIONS[objectB!.type]),
+ ) < -CONTACT_EPSILON) {
+  return { valid: false, violation: 'not-touching' };
+ }
  return { valid: true, violation: null };
 }

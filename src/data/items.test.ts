@@ -3,17 +3,17 @@ import { ITEM_DEFINITIONS, MATERIAL_DAMAGE_MULTIPLIER } from './items';
 import type { ItemType } from '../types/game';
 import { CHAIN_MAX_HP } from '../utils/Constants';
 
-const ALL_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'anvil'];
+const ALL_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil'];
 
 describe('item definitions', () => {
-  it('defines exactly the four junk items', () => {
+  it('defines exactly the five junk items', () => {
     expect(Object.keys(ITEM_DEFINITIONS).sort()).toEqual([...ALL_ITEMS].sort());
   });
 
-  it('every item is buildable: valid material, hp, mass and size', () => {
+  it('every item has a valid material, hp, mass, size and shape', () => {
     for (const def of Object.values(ITEM_DEFINITIONS)) {
       expect(['wood', 'metal', 'core']).toContain(def.material);
-      expect(['rectangle', 'chain']).toContain(def.shape);
+      expect(['rectangle', 'chain', 'nail']).toContain(def.shape);
       expect(def.maxHp).toBeGreaterThan(0);
       expect(def.massKg).toBeGreaterThan(0);
       expect(def.width).toBeGreaterThan(0);
@@ -26,6 +26,7 @@ describe('item definitions', () => {
     expect(ITEM_DEFINITIONS.plank).toMatchObject({ material: 'wood', maxHp: 200, massKg: 8, width: 160, height: 22, shape: 'rectangle' });
     expect(ITEM_DEFINITIONS.metal_sheet).toMatchObject({ material: 'metal', maxHp: 400, massKg: 25, width: 150, height: 18, shape: 'rectangle' });
     expect(ITEM_DEFINITIONS.chain).toMatchObject({ material: 'metal', maxHp: 60, massKg: 2, width: 24, height: 24, shape: 'chain' });
+    expect(ITEM_DEFINITIONS.nail).toMatchObject({ material: 'metal', width: 18, height: 18, shape: 'nail' });
     expect(ITEM_DEFINITIONS.anvil).toMatchObject({ material: 'metal', maxHp: 800, massKg: 100, width: 70, height: 45, shape: 'rectangle' });
   });
 

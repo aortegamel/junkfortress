@@ -108,11 +108,25 @@ export class WaveScene extends Phaser.Scene implements DebugProvider {
 
     this.createHud();
     this.createMenuButton();
+    const intro = this.add
+      .text(
+        GAME_WIDTH / 2,
+        84,
+        'Zombies incoming from the right — protect the CORE.\nA / D move · Space jumps · mouse aims · click fires.',
+        { fontFamily: 'monospace', fontSize: '14px', color: '#b8b2b6', align: 'center' },
+      )
+      .setOrigin(0.5, 0)
+      .setDepth(HUD_DEPTH + 1);
+    this.tweens.add({ targets: intro, alpha: 0, delay: 7000, duration: 1200, onComplete: () => intro.destroy() });
     this.input.once('pointerdown', () => sfx.unlock());
     this.input.keyboard?.once('keydown', () => sfx.unlock());
 
     setDebugProvider(this);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => setDebugProvider(null));
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      setDebugProvider(null);
+      this.structureManager?.dispose();
+      this.structureManager = null;
+    });
     if (location.search.includes('debug')) this.setOverlayVisible(true);
     this.input.keyboard?.on('keydown-BACKTICK', () => this.setOverlayVisible(!this.overlayVisible));
 
@@ -224,6 +238,8 @@ export class WaveScene extends Phaser.Scene implements DebugProvider {
 
   private checkWaveEnd(): void {
     if (this.waveEnded) return;
+    // A rig with no zombies of its own must not end the wave before the harness drives it.
+    if (this.scenarioName !== null && SCENARIOS[this.scenarioName]?.keepAlive) return;
     if (this.live.length === 0 && this.pendingSpawns === 0) this.endWave('victory');
   }
 

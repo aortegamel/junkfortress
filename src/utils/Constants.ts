@@ -52,8 +52,10 @@ export const RICOCHET_DAMAGE_DECAY = 0.85;
 export const CHAIN_MAX_LENGTH = 220;
 export const CHAIN_MAX_HP = 60;
 export const CHAIN_SEGMENT_THICKNESS = 8;
+export const NAIL_MAX_LENGTH = 24;
+export const GROUND_ANCHOR_ID = '__ground__';
+export const CONTACT_EPSILON = 4;
 
-export const SUPPORT_EPSILON = 4;
 export const MAX_BODY_VELOCITY = 1800;
 
 /**

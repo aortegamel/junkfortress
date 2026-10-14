@@ -11,14 +11,15 @@ import {
   ZOMBIE_SPEED,
   createInitialRunState,
   createLoadout,
+  LOADOUT_NAILS,
 } from './gameData';
 import { runStore } from '../state/runStore';
 import { ITEM_DEFINITIONS } from './items';
-import { CHAIN_MAX_HP, PLAYER_SPEED } from '../utils/Constants';
+import { CHAIN_MAX_HP, GROUND_ANCHOR_ID, PLAYER_SPEED } from '../utils/Constants';
 import { nextRng, seedRng } from '../utils/rng';
 import type { ItemType } from '../types/game';
 
-const ALLOWED_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'anvil'];
+const ALLOWED_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil'];
 
 describe('weapons', () => {
   it('gives the zombie pistol slower, weaker, less accurate fire than the survivor pistol', () => {
@@ -82,24 +83,41 @@ describe('loadout', () => {
     expect(state.coreHp).toBe(CORE_MAX_HP);
   });
 
-  it('always hands over 3-4 planks, 3-4 sheets, exactly one chain and one anvil', () => {
+  it('always hands over 3-4 planks, 3-4 sheets, a fixed bag of nails, one chain and one anvil', () => {
     for (let seed = 0; seed < 40; seed++) {
       seedRng(seed);
       const types = createLoadout().map((item) => item.type);
-      expect(types.length).toBeGreaterThanOrEqual(8);
-      expect(types.length).toBeLessThanOrEqual(10);
+      expect(types.length).toBeGreaterThanOrEqual(8 + LOADOUT_NAILS);
+      expect(types.length).toBeLessThanOrEqual(10 + LOADOUT_NAILS);
       for (const type of types) expect(ALLOWED_ITEMS).toContain(type);
       const count = (type: ItemType): number => types.filter((t) => t === type).length;
       expect(count('plank')).toBeGreaterThanOrEqual(3);
       expect(count('plank')).toBeLessThanOrEqual(4);
       expect(count('metal_sheet')).toBeGreaterThanOrEqual(3);
       expect(count('metal_sheet')).toBeLessThanOrEqual(4);
+      expect(count('nail')).toBe(LOADOUT_NAILS);
       expect(count('chain')).toBe(1);
       expect(count('anvil')).toBe(1);
     }
   });
 
-  it('rolls both the 8 and the 10 item totals across seeds', () => {
+  it('hands over enough nails to joint every starting piece, anvil included', () => {
+    for (let seed = 0; seed < 40; seed++) {
+      seedRng(seed);
+      const types = createLoadout().map((item) => item.type);
+      const pieces = types.filter((t) => t !== 'chain' && t !== 'nail').length;
+      const nails = types.filter((t) => t === 'nail').length;
+      // A connected structure of n pieces needs n-1 joints, plus a ground nail for the base.
+      expect(nails).toBeGreaterThanOrEqual(pieces);
+    }
+  });
+
+  it('starts every run with no nails placed', () => {
+    expect(createInitialRunState(9).nails).toEqual([]);
+    expect(runStore.reset(9).nails).toEqual([]);
+  });
+
+  it('rolls both the low and the high piece totals across seeds', () => {
     const totals = new Set<number>();
     for (let seed = 0; seed < 40; seed++) {
       seedRng(seed);
@@ -127,6 +145,7 @@ describe('run store bookkeeping', () => {
     expect(state.outcome).toBe('none');
     expect(state.placedObjects).toEqual([]);
     expect(state.chains).toEqual([]);
+    expect(state.nails).toEqual([]);
   });
 
   it('clamps damage at zero', () => {
@@ -196,6 +215,43 @@ describe('run store bookkeeping', () => {
 
     runStore.removeChain('c1');
     expect(runStore.get().chains).toEqual([]);
+  });
+
+  it('adds and removes nails', () => {
+    runStore.reset();
+    runStore.addNail({ id: 'n1', anchorA: { objectId: 'a', x: 0, y: 0 }, anchorB: { objectId: 'b', x: 0, y: 4 } });
+    expect(runStore.get().nails.map((n) => n.id)).toEqual(['n1']);
+
+    runStore.removeNail('n1');
+    expect(runStore.get().nails).toEqual([]);
+  });
+
+  it('drops every nail that points at a removed object', () => {
+    runStore.reset();
+    const plank = { id: 'p1', type: 'plank' as const, x: 220, y: 640, rotation: 0, hp: ITEM_DEFINITIONS.plank.maxHp };
+    const sheet = { id: 's1', type: 'metal_sheet' as const, x: 220, y: 610, rotation: 0, hp: ITEM_DEFINITIONS.metal_sheet.maxHp };
+    runStore.setPlacedObjects([plank, sheet]);
+    runStore.addNail({ id: 'n1', anchorA: { objectId: 'p1', x: 0, y: -11 }, anchorB: { objectId: 's1', x: 0, y: 12 } });
+    runStore.addNail({ id: 'n2', anchorA: { objectId: GROUND_ANCHOR_ID, x: 220, y: 660 }, anchorB: { objectId: 'p1', x: 0, y: 11 } });
+
+    runStore.setPlacedObjects([sheet]);
+    expect(runStore.get().nails).toEqual([]);
+  });
+
+  it('keeps ground-anchored nails when another object goes', () => {
+    runStore.reset();
+    runStore.setPlacedObjects([
+      { id: 'p1', type: 'plank', x: 220, y: 640, rotation: 0, hp: ITEM_DEFINITIONS.plank.maxHp },
+      { id: 'p2', type: 'plank', x: 300, y: 640, rotation: 0, hp: ITEM_DEFINITIONS.plank.maxHp },
+    ]);
+    runStore.addNail({ id: 'n1', anchorA: { objectId: GROUND_ANCHOR_ID, x: 220, y: 660 }, anchorB: { objectId: 'p1', x: 0, y: 11 } });
+    runStore.addNail({ id: 'n2', anchorA: { objectId: 'p1', x: 0, y: 0 }, anchorB: { objectId: 'p2', x: -40, y: 0 } });
+
+    runStore.recordStructureLost('p2');
+    expect(runStore.get().nails.map((n) => n.id)).toEqual(['n1']);
+
+    runStore.recordStructureLost('p1');
+    expect(runStore.get().nails).toEqual([]);
   });
 
   it('moves inventory items in and out with unique ids', () => {

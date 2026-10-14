@@ -1,4 +1,4 @@
-export type ItemType = 'plank' | 'metal_sheet' | 'chain' | 'anvil';
+export type ItemType = 'plank' | 'metal_sheet' | 'chain' | 'nail' | 'anvil';
 
 export interface InventoryItem {
   id: string;
@@ -16,8 +16,9 @@ export interface SavedBuildObject {
 }
 
 export interface ChainAnchor {
+  /** Object id, or GROUND_ANCHOR_ID for an anchor on the ground line. */
   objectId: string;
-  /** Offset from that object's center, in world axes. */
+  /** Offset from that object's center, in world axes. A ground anchor stores absolute coordinates. */
   x: number;
   y: number;
 }
@@ -27,6 +28,13 @@ export interface SavedChain {
   anchorA: ChainAnchor;
   anchorB: ChainAnchor;
   hp: number;
+}
+
+/** Nails take no damage, so they carry no hp field. */
+export interface SavedNail {
+  id: string;
+  anchorA: ChainAnchor;
+  anchorB: ChainAnchor;
 }
 
 export interface RunStats {
@@ -51,6 +59,7 @@ export interface RunState {
   inventory: InventoryItem[];
   placedObjects: SavedBuildObject[];
   chains: SavedChain[];
+  nails: SavedNail[];
   playerHp: number;
   coreHp: number;
   stats: RunStats;

@@ -1,9 +1,9 @@
 import { ITEM_DEFINITIONS } from '../data/items';
 import type { ItemDefinition } from '../data/items';
-import { CHAIN_MAX_HP, GROUND_Y, ZOMBIE_SPAWN_X } from '../utils/Constants';
+import { CHAIN_MAX_HP, GROUND_ANCHOR_ID, GROUND_Y, ZOMBIE_SPAWN_X } from '../utils/Constants';
 import { DEFAULT_SEED } from '../utils/rng';
 import { runStore } from '../state/runStore';
-import type { ItemType, SavedBuildObject, SavedChain } from '../types/game';
+import type { ItemType, SavedBuildObject, SavedChain, SavedNail } from '../types/game';
 
 export interface ScenarioZombie {
  x: number;
@@ -21,8 +21,10 @@ export interface ScenarioTrigger {
 
 export interface DebugScenario {
  name: string;
+ /** Rig with no zombies of its own: the wave must not end itself before the harness drives it. */
+ keepAlive?: boolean;
  hp?: { player?: number; core?: number };
- build?: { placedObjects: SavedBuildObject[]; chains?: SavedChain[] };
+ build?: { placedObjects: SavedBuildObject[]; chains?: SavedChain[]; nails?: SavedNail[] };
  zombies: ScenarioZombie[];
  triggers?: ScenarioTrigger[];
 }
@@ -54,6 +56,30 @@ function buildObject(id: string, type: ItemType, x: number, y: number, rotation:
 /** A plank stood on end, its foot on the ground and its top at POST_TOP_Y. */
 function standingPlank(id: string, x: number): SavedBuildObject {
  return buildObject(id, 'plank', x, GROUND_Y - ITEM_DEFINITIONS.plank.width / 2, 90);
+}
+
+/**
+ * Nail endpoints are world-axis offsets from the piece centre, except a ground endpoint, which is
+ * absolute. A stood-up plank reaches half its 160px length below centre, a flat one half its height.
+ */
+const STANDING_PLANK_BOTTOM = ITEM_DEFINITIONS.plank.width / 2;
+
+/** Pins a piece's bottom edge to the ground point straight below its centre. */
+function groundNail(id: string, obj: SavedBuildObject, bottom: number): SavedNail {
+ return {
+  id,
+  anchorA: { objectId: obj.id, x: 0, y: bottom },
+  anchorB: { objectId: GROUND_ANCHOR_ID, x: obj.x, y: GROUND_Y },
+ };
+}
+
+/** Pins two pieces at the one world point where they touch. */
+function jointNail(id: string, a: SavedBuildObject, b: SavedBuildObject, x: number, y: number): SavedNail {
+ return {
+  id,
+  anchorA: { objectId: a.id, x: x - a.x, y: y - a.y },
+  anchorB: { objectId: b.id, x: x - b.x, y: y - b.y },
+ };
 }
 
 function zombie(x: number, opts: Omit<ScenarioZombie, 'x' | 'y' | 'at'> = {}): ScenarioZombie {
@@ -132,13 +158,17 @@ function ricochetScenario(): DebugScenario {
  // A vertical post under the plate's face would stand in the incoming shot, so it goes where the
  // slab crosses the post's own top height: past the contact, clear of the bullet's flight path.
  const postX = slabCrossingX(center, axis, POST_TOP_Y, sheet);
+ const post = standingPlank('ricochet-post', postX);
+ const plate = buildObject('ricochet-plate', 'metal_sheet', center.x, center.y, rotation);
 
  return {
   name: 'ricochet',
   build: {
-   placedObjects: [
-    standingPlank('ricochet-post', postX),
-    buildObject('ricochet-plate', 'metal_sheet', center.x, center.y, rotation),
+   placedObjects: [post, plate],
+   // Nails hold the rig: the post is pinned to the ground and the plate to the post's top edge.
+   nails: [
+    groundNail('ricochet-post-nail', post, STANDING_PLANK_BOTTOM),
+    jointNail('ricochet-plate-nail', post, plate, postX, POST_TOP_Y),
    ],
   },
   zombies: [
@@ -158,12 +188,16 @@ function collapseScenario(): DebugScenario {
  const postId = 'collapse-post';
  const postX = 700;
  const sheet = ITEM_DEFINITIONS.metal_sheet;
+ const post = standingPlank(postId, postX);
+ const plate = buildObject('collapse-sheet', 'metal_sheet', postX, POST_TOP_Y - sheet.height / 2, 0);
  return {
   name: 'collapse',
   build: {
-   placedObjects: [
-    standingPlank(postId, postX),
-    buildObject('collapse-sheet', 'metal_sheet', postX, POST_TOP_Y - sheet.height / 2, 0),
+   placedObjects: [post, plate],
+   // Destroying the post drops both nails, so the sheet is left with nothing to hold it up.
+   nails: [
+    groundNail('collapse-post-nail', post, STANDING_PLANK_BOTTOM),
+    jointNail('collapse-sheet-nail', post, plate, postX, POST_TOP_Y),
    ],
   },
   zombies: [zombie(ZOMBIE_SPAWN_X, { stationary: true })],
@@ -190,15 +224,20 @@ function anvilScenario(): DebugScenario {
  // The anvil hangs ANVIL_DROP below the lintel's underside: its top face is the chain's lower anchor,
  // so the anvil's center sits a further half-height down.
  const anvilY = POST_TOP_Y + ANVIL_DROP + anvil.height / 2;
+ const left = standingPlank('anvil-post-left', postLeft);
+ const right = standingPlank('anvil-post-right', postRight);
+ const lintel = buildObject(lintelId, 'plank', mid, lintelY, 0);
 
  return {
   name: 'anvil',
   build: {
-   placedObjects: [
-    standingPlank('anvil-post-left', postLeft),
-    standingPlank('anvil-post-right', postRight),
-    buildObject(lintelId, 'plank', mid, lintelY, 0),
-    buildObject(anvilId, 'anvil', mid, anvilY, 0),
+   placedObjects: [left, right, lintel, buildObject(anvilId, 'anvil', mid, anvilY, 0)],
+   // Nails reach the ground through both posts, so the frame is frozen and only the anvil hangs free.
+   nails: [
+    groundNail('anvil-post-left-nail', left, STANDING_PLANK_BOTTOM),
+    groundNail('anvil-post-right-nail', right, STANDING_PLANK_BOTTOM),
+    jointNail('anvil-lintel-left-nail', left, lintel, postLeft, POST_TOP_Y),
+    jointNail('anvil-lintel-right-nail', right, lintel, postRight, POST_TOP_Y),
    ],
    chains: [
     {
@@ -213,6 +252,8 @@ function anvilScenario(): DebugScenario {
   triggers: [{ at: 1500, action: 'break-chain', id: chainId }],
  };
 }
+
+const PLATFORM_X = 440;
 
 /** Harness kills these two with real clicks; nothing else spawns and nothing attacks the core. */
 function victoryScenario(): DebugScenario {
@@ -234,10 +275,33 @@ function defeatScenario(): DebugScenario {
  };
 }
 
+/**
+ * Jump rig: four planks stacked flat, the bottom one on the ground and each nailed to the plank
+ * below, so the whole column is frozen and its top is a 160px ledge at y=572 (x 360..520). That
+ * ledge stands 88px above the arena ground, inside the ~125px a jump clears. The rig carries no
+ * zombies, so keepAlive holds the wave open while the harness drives the player.
+ */
+function platformScenario(): DebugScenario {
+ const plank = ITEM_DEFINITIONS.plank;
+ const layers = 4;
+ const objects: SavedBuildObject[] = [];
+ const nails: SavedNail[] = [];
+ for (let i = 0; i < layers; i++) {
+  objects.push(buildObject(`platform-plank-${i + 1}`, 'plank', PLATFORM_X, GROUND_Y - plank.height * (i + 0.5), 0));
+ }
+ nails.push(groundNail('platform-nail-ground', objects[0], plank.height / 2));
+ for (let i = 1; i < layers; i++) {
+  // Stacked planks touch at the shared edge: layer i's underside meets layer i-1's top face.
+  nails.push(jointNail(`platform-nail-${i}`, objects[i], objects[i - 1], PLATFORM_X, GROUND_Y - plank.height * i));
+ }
+ return { name: 'platform', keepAlive: true, build: { placedObjects: objects, nails }, zombies: [] };
+}
+
 export const SCENARIOS: Record<string, DebugScenario> = {
  ricochet: ricochetScenario(),
  collapse: collapseScenario(),
  anvil: anvilScenario(),
+ platform: platformScenario(),
  victory: victoryScenario(),
  defeat: defeatScenario(),
 };
@@ -249,6 +313,7 @@ export function applyScenario(scenario: DebugScenario): void {
  if (build) {
   runStore.setPlacedObjects(build.placedObjects);
   for (const chain of build.chains ?? []) runStore.addChain(chain);
+  for (const nail of build.nails ?? []) runStore.addNail(nail);
  }
  // The store only exposes damage helpers, so rig hp overrides write the live state directly.
  if (scenario.hp?.player !== undefined) state.playerHp = scenario.hp.player;
