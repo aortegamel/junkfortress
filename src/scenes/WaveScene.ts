@@ -112,7 +112,7 @@ export class WaveScene extends Phaser.Scene implements DebugProvider {
       .text(
         GAME_WIDTH / 2,
         84,
-        'Zombies incoming from the right — protect the CORE.\nA / D move · Space jumps · mouse aims · click fires.',
+        'Zombies incoming from the right — protect the CORE.\nA / D move · Space jumps once per landing · mouse aims · click fires · ESC pauses or restarts.',
         { fontFamily: 'monospace', fontSize: '14px', color: '#b8b2b6', align: 'center' },
       )
       .setOrigin(0.5, 0)

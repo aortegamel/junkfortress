@@ -35,6 +35,14 @@ export class TitleScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
+      .text(cx, 304, 'GATHER JUNK  >  BUILD (gravity off)  >  START WAVE  >  SURVIVE', {
+        fontFamily: MONO,
+        fontSize: '15px',
+        color: '#c8c2b8',
+      })
+      .setOrigin(0.5);
+
+    this.add
       .text(cx, 368, '[ START ]', {
         fontFamily: MONO,
         fontSize: '32px',
@@ -65,17 +73,17 @@ export class TitleScene extends Phaser.Scene {
     });
 
     this.controlsColumn(cx - 320, 'BUILD', [
-      ['Mouse', 'place / select'],
+      ['Mouse', 'place / move'],
       ['Q / E', 'rotate'],
-      ['RMB', 'cancel'],
-      ['Esc', 'menu'],
+      ['RMB', 'return / cancel'],
+      ['Esc', 'menu / restart'],
     ]);
     this.controlsColumn(cx + 60, 'WAVE', [
       ['A / D', 'move'],
-      ['Space / W', 'jump'],
+      ['Space / W', 'jump, once per landing'],
       ['Mouse', 'aim'],
       ['LMB', 'fire'],
-      ['Esc', 'menu'],
+      ['Esc', 'menu / restart'],
     ]);
 
     this.add
