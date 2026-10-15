@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
-import { COLLISION, CRUSH_COOLDOWN_MS, CRUSH_MIN_VY, GROUND_ANCHOR_ID, MAX_BODY_VELOCITY, STEPS_PER_SECOND } from '../utils/Constants';
+import { BLAST_DAMAGE, BLAST_IMPULSE, BLAST_SHAKE, BLAST_SHAKE_MS, COLLISION, CRUSH_COOLDOWN_MS, CRUSH_MIN_VY, GROUND_ANCHOR_ID, MAX_BODY_VELOCITY, STEPS_PER_SECOND } from '../utils/Constants';
 import { ITEM_DEFINITIONS } from '../data/items';
 import type { ItemDefinition, Material } from '../data/items';
 import { runStore } from '../state/runStore';
 import { crushDamage } from '../utils/Crush';
+import { explosionDamage } from '../utils/Explosion';
 import { groundedNailObjects } from './StructureSystem';
 import { sfx } from './Audio';
 import type { Effects } from './Effects';
@@ -156,6 +157,9 @@ const CRUSH_SHAKE_MS = 160;
 const CRUSH_DUST = 5;
 /** Sub-pixel nudge that frees a released body from its old resting contact. */
 const NUDGE = { x: 0, y: 0.5 };
+/** Build mode and scene teardown have no zombies, so they share one empty provider. */
+const NO_ZOMBIES: readonly Zombie[] = [];
+const noZombies = (): readonly Zombie[] => NO_ZOMBIES;
 /** Scratch vectors: the per-frame and per-hit paths must not allocate. */
 const VELOCITY = { x: 0, y: 0 };
 const ZERO_VELOCITY = { x: 0, y: 0 };
@@ -165,6 +169,7 @@ const POINT = { x: 0, y: 0 };
 export class WaveStructureManager {
  private readonly scene: Phaser.Scene;
  private readonly effects: Effects;
+ private readonly zombies: () => readonly Zombie[];
  private readonly bodies = new Map<string, BodyRuntime>();
  private readonly chains = new Map<string, ChainRuntime>();
  private readonly nails = new Map<string, NailRuntime>();
@@ -176,9 +181,10 @@ export class WaveStructureManager {
  private readonly detachedIds: string[] = [];
  private refreshedAt = Number.NaN;
 
- constructor(scene: Phaser.Scene, opts: { effects: Effects }) {
+ constructor(scene: Phaser.Scene, opts: { effects: Effects; zombies?: () => readonly Zombie[] }) {
   this.scene = scene;
   this.effects = opts.effects;
+  this.zombies = opts.zombies ?? noZombies;
   this.chainLayer = scene.add.graphics().setDepth(CHAIN_DEPTH);
   this.nailLayer = scene.add.graphics().setDepth(NAIL_DEPTH);
   scene.matter.world.on(Phaser.Physics.Matter.Events.COLLISION_START, this.onCollisionStart, this);
@@ -351,6 +357,10 @@ export class WaveStructureManager {
   const rt = this.bodies.get(id);
   if (rt === undefined) return;
 
+  // Read the pose before the world drops the body: the break effects and a tank blast fire here.
+  const x = rt.body.position.x;
+  const y = rt.body.position.y;
+
   // Chains and nails die with their anchors, so detach them first and let the loads go.
   const detached = this.detachedIds;
   detached.length = 0;
@@ -379,8 +389,6 @@ export class WaveStructureManager {
   // This also drops the saved nails that hung off the piece that just broke.
   runStore.recordStructureLost(id);
 
-  const x = rt.body.position.x;
-  const y = rt.body.position.y;
   const heavy = rt.def.massKg >= HEAVY_MASS_KG;
   if (rt.def.material === 'wood') {
    this.effects.debris(x, y, WOOD_DEBRIS_COLOR, heavy ? 16 : 10);
@@ -392,6 +400,84 @@ export class WaveStructureManager {
    if (heavy) this.effects.shake(ANVIL_BREAK_SHAKE);
    sfx.metalBreak();
   }
+
+  // A tank detonates where it broke. Build edits and teardown pass loud: false and never get here.
+  if (rt.def.explodes === true) this.explode(x, y);
+ }
+
+ /**
+  * One propane blast: a radial hit on zombies and pieces, plus a kick for live junk. A killed tank
+  * comes back through damageObject -> destroyObject -> explode, so the recursion runs once per
+  * exploding tank and is bounded by the piece count.
+  */
+ private explode(x: number, y: number): void {
+  sfx.explosion();
+  this.effects.blast(x, y, METAL_DEBRIS_COLOR);
+  this.effects.shake(BLAST_SHAKE, BLAST_SHAKE_MS);
+
+  // A dying zombie mutates the scene's live list, so iterate a copy of the provider result.
+  const zombies = [...this.zombies()];
+  for (let i = 0; i < zombies.length; i++) {
+   const zombie = zombies[i];
+   if (!zombie.alive) continue;
+   const body = zombie.sprite.body as MatterJS.BodyType | null;
+   if (body === null) continue;
+   const px = body.position.x;
+   const py = body.position.y;
+   if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+   const damage = explosionDamage(Math.hypot(px - x, py - y));
+   if (damage <= 0) continue;
+   zombie.damage(damage, 'explosion');
+  }
+
+  // Collected first, applied after: a killed tank re-enters explode() mid-loop, so a shared scratch
+  // array or a live this.bodies iteration would be clobbered by the nested blast.
+  const ids: string[] = [];
+  const damages: number[] = [];
+  for (const rt of this.bodies.values()) {
+   const body = rt.body;
+   const px = body.position.x;
+   const py = body.position.y;
+   if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+
+   const damage = explosionDamage(Math.hypot(px - x, py - y));
+   if (damage <= 0) continue;
+   ids.push(rt.target.id);
+   damages.push(damage);
+   if (body.isStatic) continue;
+
+   // Radial kick, clamped exactly like updateBodies does it.
+   let dx = px - x;
+   let dy = py - y;
+   const distance = Math.hypot(dx, dy);
+   if (distance === 0) {
+    // A body on the exact centre has no direction: push it straight up.
+    dx = 0;
+    dy = -1;
+   } else {
+    dx /= distance;
+    dy /= distance;
+   }
+   const kick = BLAST_IMPULSE * (damage / BLAST_DAMAGE);
+   let vx = body.velocity.x + dx * kick;
+   let vy = body.velocity.y + dy * kick;
+   if (!Number.isFinite(vx) || !Number.isFinite(vy)) {
+    this.scene.matter.body.setVelocity(body, ZERO_VELOCITY);
+    continue;
+   }
+   const speed = Math.hypot(vx, vy);
+   if (speed > MAX_STEP_SPEED) {
+    const k = MAX_STEP_SPEED / speed;
+    vx *= k;
+    vy *= k;
+   }
+   VELOCITY.x = vx;
+   VELOCITY.y = vy;
+   this.scene.matter.body.setVelocity(body, VELOCITY);
+  }
+
+  // Applying afterwards sends a chained tank through the normal damage path, so it detonates too.
+  for (let i = 0; i < ids.length; i++) this.damageObject(ids[i], damages[i]);
  }
 
  damageChain(id: string, amount: number, hit?: { x: number; y: number }): boolean {

@@ -70,4 +70,17 @@ export const CRUSH_SPEED_THRESHOLD = 150;
 export const CRUSH_DAMAGE_FACTOR = 0.05;
 export const CRUSH_DAMAGE_MAX = 2500;
 
+/**
+ * Propane blast. A tank is 46 px wide, so two tanks can never rest closer than 46 px apart, and
+ * explosionDamage(46) is 231 against the tank's 180 hp: the nearest tank always chain-detonates.
+ * The 200 px radius is read off play: the horde closes at roughly 29 px/s, so it stands 140-220 px
+ * out when a lane tank cooks off, and a 120 px blast reached none of them. Zombies (60 hp) die out
+ * to 160 px; a plank (200 hp) only breaks within 73 px, so a tank in your own fort stays usable.
+ */
+export const BLAST_RADIUS = 200;
+export const BLAST_DAMAGE = 300;
+export const BLAST_IMPULSE = 10;
+export const BLAST_SHAKE = 14;
+export const BLAST_SHAKE_MS = 220;
+
 export const GROUND_HEIGHT = GAME_HEIGHT - GROUND_Y;

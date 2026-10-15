@@ -1,4 +1,4 @@
-export type ItemType = 'plank' | 'metal_sheet' | 'chain' | 'nail' | 'anvil';
+export type ItemType = 'plank' | 'metal_sheet' | 'chain' | 'nail' | 'anvil' | 'propane';
 
 export interface InventoryItem {
   id: string;
@@ -42,6 +42,7 @@ export interface RunStats {
   playerKills: number;
   ricochetKills: number;
   crushKills: number;
+  explosionKills: number;
   bulletsFiredByZombies: number;
   bulletsRicocheted: number;
   structuresLost: number;
@@ -65,4 +66,4 @@ export interface RunState {
   stats: RunStats;
 }
 
-export type KillSource = 'player' | 'ricochet' | 'crush';
+export type KillSource = 'player' | 'ricochet' | 'crush' | 'explosion';

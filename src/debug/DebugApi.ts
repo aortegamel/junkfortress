@@ -84,6 +84,7 @@ export function getState(): Record<string, unknown> {
   ricochets: state.stats.bulletsRicocheted,
   ricochetKills: state.stats.ricochetKills,
   crushKills: state.stats.crushKills,
+  explosionKills: state.stats.explosionKills,
   playerKills: state.stats.playerKills,
   dynamicStructures,
   activeChains: state.chains.length,

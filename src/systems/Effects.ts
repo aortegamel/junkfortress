@@ -9,6 +9,12 @@ const SPARK_SPREAD_DEG = 30;
 const FLASH_MS = 70;
 const TRACER_MS = 90;
 const TEXT_MS = 700;
+/** The blast flash is the same additive blob, held longer and scaled to read as the 200px radius. */
+const BLAST_FLASH_MS = 220;
+const BLAST_FLASH_SCALE = 9;
+const BLAST_SPARKS = 26;
+const BLAST_DUST = 10;
+const BLAST_DEBRIS = 14;
 
 /**
  * Per-scene combat feedback. One emitter per particle effect is created up front and
@@ -101,6 +107,35 @@ export class Effects {
   if (!this.room(count)) return;
   this.debrisEmitter.particleTint = color;
   this.debrisEmitter.explode(count, x, y);
+ }
+
+ /** Propane blast: expanding flash plus a full-circle burst of sparks, dust and debris. */
+ blast(x: number, y: number, debrisColor: number): void {
+  if (!this.live()) return;
+
+  const flash = this.scene.add
+   .image(x, y, 'flash')
+   .setBlendMode(Phaser.BlendModes.ADD)
+   .setScale(1)
+   .setDepth(FLASH_DEPTH);
+
+  this.scene.tweens.add({
+   targets: flash,
+   scale: BLAST_FLASH_SCALE,
+   alpha: 0,
+   duration: BLAST_FLASH_MS,
+   onComplete: () => flash.destroy(),
+  });
+
+  // The spark emitter keeps the angle of its last burst, and sparks() sets a narrow cone on every
+  // call, so the blast widens it to a full circle first. One room() check covers the whole burst.
+  const count = BLAST_SPARKS + BLAST_DUST + BLAST_DEBRIS;
+  if (!this.room(count)) return;
+  this.sparkEmitter.particleAngle = { min: -180, max: 180 };
+  this.sparkEmitter.explode(BLAST_SPARKS, x, y);
+  this.dustEmitter.explode(BLAST_DUST, x, y);
+  this.debrisEmitter.particleTint = debrisColor;
+  this.debrisEmitter.explode(BLAST_DEBRIS, x, y);
  }
 
  muzzleFlash(x: number, y: number, angle: number, color: number): void {

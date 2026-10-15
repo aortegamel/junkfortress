@@ -11,6 +11,8 @@ export interface ItemDefinition {
   width: number;
   height: number;
   shape: 'rectangle' | 'chain' | 'nail';
+  /** Tanks cook off when their hp runs out instead of crumbling. */
+  explodes?: true;
 }
 
 export const ITEM_DEFINITIONS: Record<ItemType, ItemDefinition> = {
@@ -19,6 +21,7 @@ export const ITEM_DEFINITIONS: Record<ItemType, ItemDefinition> = {
   chain: { id: 'chain', name: 'Chain', material: 'metal', maxHp: 60, massKg: 2, width: 24, height: 24, shape: 'chain' },
   nail: { id: 'nail', name: 'Nail', material: 'metal', maxHp: 20, massKg: 1, width: 18, height: 18, shape: 'nail' },
   anvil: { id: 'anvil', name: 'Anvil', material: 'metal', maxHp: 800, massKg: 100, width: 70, height: 45, shape: 'rectangle' },
+  propane: { id: 'propane', name: 'Propane Tank', material: 'metal', maxHp: 180, massKg: 22, width: 46, height: 64, shape: 'rectangle', explodes: true },
 };
 
 /** Wood soaks bullets whole, metal shrugs most of them off. */

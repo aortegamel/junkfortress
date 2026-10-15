@@ -32,6 +32,7 @@ export class ResultScene extends Phaser.Scene {
     const rows: [string, number | string][] = [
       ['RICOCHET KILLS', state.stats.ricochetKills],
       ['CRUSH KILLS', state.stats.crushKills],
+      ['EXPLOSION KILLS', state.stats.explosionKills],
       ['PLAYER KILLS', state.stats.playerKills],
     ];
     if (outcome === 'victory') rows.push(['CORE HP', `${state.coreHp} / ${CORE_MAX_HP}`]);
@@ -77,6 +78,7 @@ export class ResultScene extends Phaser.Scene {
     state.stats.playerKills = 0;
     state.stats.ricochetKills = 0;
     state.stats.crushKills = 0;
+    state.stats.explosionKills = 0;
     state.stats.bulletsFiredByZombies = 0;
     state.stats.bulletsRicocheted = 0;
     state.stats.structuresLost = 0;

@@ -81,7 +81,7 @@ export class WaveScene extends Phaser.Scene implements DebugProvider {
     createArenaPhysics(this);
 
     this.fx = new Effects(this);
-    this.structureManager = new WaveStructureManager(this, { effects: this.fx });
+    this.structureManager = new WaveStructureManager(this, { effects: this.fx, zombies: () => this.live });
     this.structureManager.spawn();
 
     this.bulletManager = new BulletManager(this, {
@@ -214,6 +214,7 @@ export class WaveScene extends Phaser.Scene implements DebugProvider {
 
     if (source === 'ricochet') this.fx.floatText(x, y - 34, 'RICOCHET', '#7cff9c');
     else if (source === 'crush') this.fx.floatText(x, y - 34, 'CRUSH', '#ffd070');
+    else if (source === 'explosion') this.fx.floatText(x, y - 34, 'BOOM', '#ff9a4d');
 
     this.checkWaveEnd();
   }

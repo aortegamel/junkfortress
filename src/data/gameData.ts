@@ -30,6 +30,7 @@ export const ITEM_NAMES: Record<ItemType, string> = {
  chain: ITEM_DEFINITIONS.chain.name,
  nail: ITEM_DEFINITIONS.nail.name,
  anvil: ITEM_DEFINITIONS.anvil.name,
+ propane: ITEM_DEFINITIONS.propane.name,
 };
 
 export interface WaveSpawn {
@@ -54,7 +55,8 @@ let inventoryIdCounter = 0;
 
 /**
  * Fixed count, not drawn from the rng stream, so the seeded rolls stay stable.
- * The largest loadout is 4 planks + 4 sheets + 1 anvil: 9 pieces need 8 joints, plus 1 nail to ground the base.
+ * The largest loadout is 4 planks + 4 sheets + 1 anvil + 1 propane = 10 pieces, so 12 nails
+ * still covers every joint.
  */
 export const LOADOUT_NAILS = 12;
 
@@ -73,6 +75,7 @@ export function createLoadout(): InventoryItem[] {
  for (let i = 0; i < LOADOUT_NAILS; i++) items.push(createInventoryItem('nail'));
  items.push(createInventoryItem('chain'));
  items.push(createInventoryItem('anvil'));
+ items.push(createInventoryItem('propane'));
  return items;
 }
 
@@ -95,6 +98,7 @@ export function createInitialRunState(seed: number = DEFAULT_SEED): RunState {
    playerKills: 0,
    ricochetKills: 0,
    crushKills: 0,
+   explosionKills: 0,
    bulletsFiredByZombies: 0,
    bulletsRicocheted: 0,
    structuresLost: 0,

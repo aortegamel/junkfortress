@@ -37,7 +37,7 @@ function attachRejection(violation: NailViolation | null, nail: boolean): string
 type BuildMode = 'idle' | 'placing' | 'moving' | 'chain' | 'nail';
 
 /** Palette slots are fixed left-to-right, whatever the inventory holds. */
-const PALETTE_ORDER: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil'];
+const PALETTE_ORDER: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil', 'propane'];
 
 interface PendingAnchor {
  objectId: string; x: number; y: number;
@@ -519,7 +519,7 @@ export class BuildScene extends Phaser.Scene {
   this.slotUi = [];
   this.slots = [];
 
-  const counts: Record<ItemType, number> = { plank: 0, metal_sheet: 0, chain: 0, nail: 0, anvil: 0 };
+  const counts: Record<ItemType, number> = { plank: 0, metal_sheet: 0, chain: 0, nail: 0, anvil: 0, propane: 0 };
   for (const item of runStore.get().inventory) counts[item.type] += 1;
 
   // Fixed order: slots must never reshuffle under the pointer as junk is spent.
@@ -622,7 +622,7 @@ export class BuildScene extends Phaser.Scene {
     `${placed > 0 ? '[x]' : '[ ]'} 1. Click junk (right), click arena - it falls`,
     `${placed >= 3 ? '[x]' : '[ ]'} 2. Place ${placed >= 3 ? '3/3' : `${placed}/3`} pieces - Q/E angles metal`,
     `${nailed ? '[x]' : '[ ]'} 3. Nail two touching pieces, or nail junk to ground`,
-    `${chained ? '[x]' : '[ ]'} 4. Chain is the flex tie - anvil overhead = drop trap`,
+    `${chained ? '[x]' : '[ ]'} 4. Chain the anvil, then move it mid-air to hang it`,
     '[ ] 5. START WAVE (top) when ready',
    ].join('\n'),
   );

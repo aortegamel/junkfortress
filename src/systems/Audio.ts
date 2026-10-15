@@ -191,6 +191,14 @@ export const sfx = {
   tone('sine', 130, 45, 0.28, 0.4);
  },
 
+ explosion(): void {
+  if (!ready('explosion')) return;
+  noise(0.55, 0.5, 'lowpass', 1500, 110, 0.7);
+  noise(0.05, 0.35, 'highpass', 3400, 2600, 0.7, 0.012);
+  tone('sine', 130, 32, 0.7, 0.55);
+  tone('triangle', 240, 70, 0.4, 0.16);
+ },
+
  zombieDeath(): void {
   if (!ready('zombieDeath')) return;
   const d = vary(0.08);

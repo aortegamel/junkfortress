@@ -89,7 +89,8 @@ export const runStore = {
     runState.stats.totalKills += 1;
     if (kind === 'player') runState.stats.playerKills += 1;
     else if (kind === 'ricochet') runState.stats.ricochetKills += 1;
-    else runState.stats.crushKills += 1;
+    else if (kind === 'crush') runState.stats.crushKills += 1;
+    else runState.stats.explosionKills += 1;
   },
 
   recordBulletFired(): void {

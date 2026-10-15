@@ -49,7 +49,7 @@ const SECTIONS: HowSection[] = [
    'Nail: click both sides of a joint where two pieces touch.',
    'A nail welds that joint solid. A chain pulls. One nail end may be ground.',
    'Only a nail to the ground holds junk up. Moving or taking back returns nails.',
-   'Signature move: hang the anvil over the lane and drop it on them.',
+   'Signature move: chain the anvil, then move it mid-air to hang it over the lane.',
   ],
  },
  {
@@ -65,9 +65,10 @@ const SECTIONS: HowSection[] = [
   lines: [
    'Wooden Plank — soaks bullets, cracks fast. Wide and light.',
    'Metal Sheet — bounces bullets. Angle it! Stronger than wood.',
-   'Chain — hangs heavy things and stays flexible. Breaks if shot enough.',
+   'Chain — hangs heavy things. Move a chained piece to set the hang. Breaks if shot.',
    'Nail — locks two touching pieces rigid. Ground nail = the piece holds still.',
    'Anvil — crushes zombies, keeps bouncing bullets after it lands.',
+   'Propane Tank — explodes when shot. The blast rips apart nearby zombies and junk.',
   ],
  },
 ];

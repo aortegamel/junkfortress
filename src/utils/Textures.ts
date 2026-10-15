@@ -12,6 +12,8 @@ type Point = Phaser.Types.Math.Vector2Like;
 const WOOD = 0xa9803f, WOOD_LIT = 0xc9a05f, WOOD_DARK = 0x6f5326, WOOD_END = 0x7c5c2c;
 const STEEL = 0x6d7681, STEEL_LIT = 0x9aa4ae, STEEL_DARK = 0x4a525b;
 const IRON = 0x1c1e22, IRON_LIT = 0x3c4249, RUST = 0x8a5a3a, OUTLINE = 0x171a15;
+// The one red family in the game, so a propane tank never reads as scrap metal.
+const TANK = 0xb23a2c, TANK_LIT = 0xd8735c, TANK_DARK = 0x7a2318;
 const Z_SKIN = 0x7d9a63, Z_SKIN_DARK = 0x556b45, Z_RAG = 0x4d5f42, Z_LEG = 0x3f4f36;
 const P_JACKET = 0x46586b, P_JACKET_DARK = 0x36455a, P_SKIN = 0xc09a6b, P_CAP = 0x2a2f36;
 
@@ -183,6 +185,53 @@ function drawAnvil(scene: Phaser.Scene): void {
     g.fillRect(26, 16, 11, 5);
     g.fillRect(33, 30, 9, 4);
     g.fillRect(50, 35, 8, 4);
+  });
+
+  grain(tex, 8, 2, 2);
+}
+
+/** Upright cylinder: iron valve collar on top, welded foot band, one light stripe down the left. */
+function drawPropane(scene: Phaser.Scene): void {
+  const tex = paint(scene, 'propane', 46, 64, (g) => {
+    // The collar and stem sit proud of the body: that silhouette is what says "gas", not "drum".
+    g.fillStyle(IRON, 1);
+    g.fillRect(14, 5, 18, 7);
+    g.fillRect(19, 1, 8, 4);
+    g.fillStyle(IRON_LIT, 1);
+    g.fillRect(14, 5, 18, 2);
+    g.fillStyle(0x33393f, 1);
+    g.fillCircle(23, 2.6, 2.4);
+
+    g.fillStyle(TANK_DARK, 1);
+    g.fillRoundedRect(2, 9, 42, 54, 9);
+    g.fillStyle(TANK, 1);
+    g.fillRoundedRect(3, 10, 40, 52, 8);
+
+    // Light stripe left, shade right: the cylinder only reads as round if the sides differ.
+    g.fillStyle(TANK_LIT, 0.5);
+    g.fillRoundedRect(7, 14, 6, 36, 3);
+    g.fillStyle(TANK_DARK, 0.6);
+    g.fillRoundedRect(37, 15, 5, 38, 2.5);
+
+    g.fillStyle(TANK_DARK, 1);
+    g.fillRect(3, 54, 40, 7);
+
+    g.lineStyle(1, TANK_DARK, 0.8);
+    g.lineBetween(4, 30, 42, 30);
+    g.lineBetween(4, 46, 42, 46);
+
+    // Rim light: red at TANK alone disappears against the dark junkyard.
+    g.lineStyle(1, 0xe8a08c, 0.6);
+    g.lineBetween(9, 11, 33, 11);
+    g.lineBetween(4, 16, 4, 50);
+    g.lineStyle(1, OUTLINE, 0.85);
+    g.strokeRoundedRect(2, 9, 42, 54, 9);
+
+    g.fillStyle(RUST, 0.7);
+    g.fillRect(30, 34, 9, 11);
+    g.fillRect(7, 49, 5, 5);
+    g.fillStyle(0xa16a42, 0.55);
+    g.fillRect(32, 37, 5, 6);
   });
 
   grain(tex, 8, 2, 2);
@@ -572,6 +621,7 @@ export function createTextures(scene: Phaser.Scene): void {
   drawPlank(scene);
   drawMetalSheet(scene);
   drawAnvil(scene);
+  drawPropane(scene);
   drawChain(scene);
   drawNail(scene);
   drawDamage(scene);
