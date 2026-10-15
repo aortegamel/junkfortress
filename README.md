@@ -23,7 +23,7 @@ Set these once in the Worker's dashboard:
 
 | Setting | Value |
 | --- | --- |
-| Worker name | `junkfortress` (must match `name` in `wrangler.jsonc`) |
+| Worker name | `my-website` (must match `name` in `wrangler.jsonc`) |
 | Git production branch | `master` |
 | Settings > Build > Build Variables and Secrets | `BUN_VERSION` = `1.4.3` |
 | Build command | `bun run build` |
