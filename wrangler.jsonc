@@ -1,0 +1,15 @@
+// Static assets only. No Worker script, so no "main" and no ASSETS binding.
+//
+// Cloudflare's master build needs the BUILD variable BUN_VERSION=1.4.3, set in
+// Workers > Settings > Build > Build Variables and Secrets. Wrangler "vars" are
+// runtime variables and cannot set it. This comment does not pin Bun.
+{
+  "name": "junkfortress",
+  "compatibility_date": "2026-10-15",
+  "observability": {
+    "enabled": false
+  },
+  "assets": {
+    "directory": "./dist"
+  }
+}

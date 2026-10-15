@@ -16,6 +16,24 @@ npm run build      # production build into dist/
 npm run preview    # serve dist/
 ```
 
+## Deploy
+
+Cloudflare Workers deploys `dist/` as static assets through `wrangler.jsonc`.
+Set these once in the Worker's dashboard:
+
+| Setting | Value |
+| --- | --- |
+| Worker name | `junkfortress` (must match `name` in `wrangler.jsonc`) |
+| Git production branch | `master` |
+| Settings > Build > Build Variables and Secrets | `BUN_VERSION` = `1.4.3` |
+| Build command | `bun run build` |
+| Deploy command | `npx wrangler deploy` |
+
+- The build installs dependencies before it runs the build command. A different build
+  command cannot change the Bun version that reads `bun.lock`.
+- `BUN_VERSION` must be a build variable. Wrangler `vars` are runtime variables and do not
+  affect the build.
+
 ## Controls
 
 | Screen | Input | Action |
