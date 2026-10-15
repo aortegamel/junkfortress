@@ -22,6 +22,9 @@ export const ITEM_DEFINITIONS: Record<ItemType, ItemDefinition> = {
   nail: { id: 'nail', name: 'Nail', material: 'metal', maxHp: 20, massKg: 1, width: 18, height: 18, shape: 'nail' },
   anvil: { id: 'anvil', name: 'Anvil', material: 'metal', maxHp: 800, massKg: 100, width: 70, height: 45, shape: 'rectangle' },
   propane: { id: 'propane', name: 'Propane Tank', material: 'metal', maxHp: 180, massKg: 22, width: 46, height: 64, shape: 'rectangle', explodes: true },
+  crate: { id: 'crate', name: 'Wooden Crate', material: 'wood', maxHp: 350, massKg: 18, width: 70, height: 70, shape: 'rectangle' },
+  girder: { id: 'girder', name: 'Steel Girder', material: 'metal', maxHp: 1000, massKg: 65, width: 190, height: 20, shape: 'rectangle' },
+  refrigerator: { id: 'refrigerator', name: 'Refrigerator', material: 'metal', maxHp: 900, massKg: 45, width: 80, height: 130, shape: 'rectangle' },
 };
 
 /** Wood soaks bullets whole, metal shrugs most of them off. */

@@ -10,8 +10,10 @@ import { Effects } from '../systems/Effects';
 import { WaveStructureManager } from '../systems/WaveStructureManager';
 import { setDebugProvider } from '../debug/DebugApi';
 import type { NailViolation, PlacementViolation } from '../systems/StructureSystem';
-import type { ChainAnchor, ItemType, SavedBuildObject } from '../types/game';
+import type { ChainAnchor, ItemType, JunkLocationId, SavedBuildObject } from '../types/game';
 import { hasSeenHowTo, markHowToSeen, showHowTo } from '../ui/HowToPlay';
+import { GATHER_BACK_BTN, gatherButtonRect, gatherCardRect, showGatherPanel } from '../ui/GatherPanel';
+import { JUNK_LOCATIONS } from '../data/gameData';
 
 /** Short, plain-language reason shown where the ghost was refused. */
 const REJECTION_TEXT: Record<PlacementViolation, string> = {
@@ -36,8 +38,8 @@ function attachRejection(violation: NailViolation | null, nail: boolean): string
 
 type BuildMode = 'idle' | 'placing' | 'moving' | 'chain' | 'nail';
 
-/** Palette slots are fixed left-to-right, whatever the inventory holds. */
-const PALETTE_ORDER: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil', 'propane'];
+/** Palette slots are fixed top-to-bottom, whatever the inventory holds. */
+const PALETTE_ORDER: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil', 'propane', 'crate', 'girder', 'refrigerator'];
 
 interface PendingAnchor {
  objectId: string; x: number; y: number;
@@ -49,17 +51,23 @@ interface SlotView {
 }
 
 const SLOT_W = 74;
-const SLOT_H = 68;
-const SLOT_GAP = 8;
+const SLOT_GAP = 6;
 const PANEL_PAD = 8;
 /**
  * The palette runs down the right edge, clear of BUILD_ZONE (x 60..700): a bar across the bottom
  * sits on the ground line, which is exactly where every ground placement has to be clicked.
+ * Slot height divides the band between the top buttons and the floor, so every slot stays above GROUND_Y.
  */
 const SLOT_X = GAME_WIDTH - 66;
-const SLOT_TOP = 170;
+const SLOT_TOP = 72;
+const SLOT_BOTTOM = GROUND_Y - 16;
+const SLOT_H = Math.floor((SLOT_BOTTOM - SLOT_TOP - (PALETTE_ORDER.length - 1) * SLOT_GAP) / PALETTE_ORDER.length);
 const HINT_Y = GAME_HEIGHT - 40;
 const START_BTN = { x: GAME_WIDTH / 2, y: 30, w: 260, h: 52 };
+/** Left of START WAVE: the top bar reads in order, gravity first, then the wave. */
+const GRAVITY_BTN = { x: START_BTN.x - START_BTN.w / 2 - 136, y: 30, w: 240, h: 52 };
+/** Left of ACTIVATE GRAVITY, in the free top-left corner: optional supplies come before the build. */
+const GATHER_BTN = { x: 123, y: 30, w: 230, h: 52 };
 const ROTATE_STEP_DEG = 15;
 const COLOR_VALID = 0x7fd07f;
 const COLOR_INVALID = 0xd06a5f;
@@ -67,11 +75,16 @@ const COLOR_INVALID = 0xd06a5f;
 const GROUND_CLICK_SLACK = 10;
 const DEPTH = { ghost: 20, outline: 21, flash: 22, ui: 30, slot: 31 };
 const HINTS: Record<BuildMode, string> = {
- idle: 'Pieces fall freely. Click junk to move it. Right-click junk to return it.',
+ idle: 'Gravity is on: junk falls and settles. Click junk to move it. Right-click returns it. GATHER JUNK adds optional supplies.',
  placing: 'Click to place. Pieces fall until they land. Q/E rotate. Right-click cancels.',
  moving: 'Click to move. Attached nails return to inventory. Q/E rotate. DEL returns the piece.',
  chain: 'Click two pieces (max 220 px). Chains flex. Right-click cancels.',
  nail: 'Click each side of a touching joint. One side can be ground. Nails lock the joint. Right-click cancels.',
+};
+/** Before ACTIVATE GRAVITY, pieces hold their placed pose, so these modes say so instead. */
+const GRAVITY_OFF_HINTS: Partial<Record<BuildMode, string>> = {
+ idle: 'Gravity is off: junk stays put in the BUILD AREA. GATHER JUNK adds optional supplies. ACTIVATE GRAVITY drops it. START WAVE works anytime.',
+ placing: 'Click the BUILD AREA to place. Gravity is off, so it stays put, even mid-air. Q/E rotate. Right-click cancels.',
 };
 
 /** Session counter: ids stay unique across scene restarts, so saved nails and chains keep a stable owner. */
@@ -111,9 +124,16 @@ export class BuildScene extends Phaser.Scene {
  /** Live runStore object being moved; the store keeps its original pose until the move commits. */
  private moving: SavedBuildObject | null = null;
  private chainFirst: PendingAnchor | null = null;
- /** Build pauses the simulation while a piece is in hand or an endpoint is being picked. */
+ /** An edit holds the simulation still while a piece is in hand or an endpoint is being picked. */
  private physicsPaused = false;
+ /** Build starts frozen; ACTIVATE GRAVITY turns the simulation on for the rest of this build. */
+ private gravityOn = false;
+ private gravityBtn!: Phaser.GameObjects.Rectangle;
+ private gravityLabel!: Phaser.GameObjects.Text;
  private helpUi: Phaser.GameObjects.GameObject[] | null = null;
+ private gatherUi: Phaser.GameObjects.GameObject[] | null = null;
+ /** Edit pause in force when GATHER JUNK opened, restored on close. */
+ private gatherResumePaused = false;
  private guideText: Phaser.GameObjects.Text | null = null;
  private guidePanel: Phaser.GameObjects.Rectangle | null = null;
  private guideDismiss: Phaser.GameObjects.Text | null = null;
@@ -126,14 +146,14 @@ export class BuildScene extends Phaser.Scene {
   // create() can run again on scene restart, so every editor field is reset here.
   this.mode = 'idle'; this.selectedType = null; this.moving = null; this.chainFirst = null;
   this.ghostRotation = 0; this.ghost = null; this.slots = []; this.slotUi = [];
-  this.physicsPaused = false;
-  this.helpUi = null; this.guideText = null; this.guidePanel = null; this.guideDismiss = null;
+  this.physicsPaused = false; this.gravityOn = false;
+  this.helpUi = null; this.gatherUi = null; this.guideText = null; this.guidePanel = null; this.guideDismiss = null;
 
   drawArena(this);
   drawBuildZone(this);
   createArenaPhysics(this);
-  // A restart inherits the previous world state, so build always starts with the simulation running.
-  this.matter.world.resume();
+  // A restart inherits the previous world state, so the build's frozen start is applied explicitly.
+  this.setPhysicsPaused(false);
   this.chainPreview = this.add.graphics().setDepth(DEPTH.ghost);
   this.outline = this.add.graphics().setDepth(DEPTH.outline);
   this.denyFlash = this.add.graphics().setDepth(DEPTH.flash);
@@ -142,7 +162,7 @@ export class BuildScene extends Phaser.Scene {
   this.structureManager.syncBuild();
   this.buildChrome();
   this.renderInventory();
-  this.hintText.setText(HINTS[this.mode]);
+  this.updateHint();
   this.maybeShowGuide();
 
   this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => this.onPointerMove(pointer.x, pointer.y));
@@ -151,13 +171,18 @@ export class BuildScene extends Phaser.Scene {
   );
   const keys = this.input.keyboard;
   keys?.on('keydown', () => sfx.unlock());
-  keys?.on('keydown-Q', () => this.rotateGhost(-ROTATE_STEP_DEG));
-  keys?.on('keydown-E', () => this.rotateGhost(ROTATE_STEP_DEG));
-  keys?.on('keydown-DELETE', () => this.returnMovingToInventory());
-  keys?.on('keydown-BACKSPACE', () => this.returnMovingToInventory());
+  // Build shortcuts stay dead while GATHER JUNK is open; startWave() refuses on its own.
+  const edit = (action: () => void) => () => {
+   if (!this.gatherUi) action();
+  };
+  keys?.on('keydown-Q', edit(() => this.rotateGhost(-ROTATE_STEP_DEG)));
+  keys?.on('keydown-E', edit(() => this.rotateGhost(ROTATE_STEP_DEG)));
+  keys?.on('keydown-DELETE', edit(() => this.returnMovingToInventory()));
+  keys?.on('keydown-BACKSPACE', edit(() => this.returnMovingToInventory()));
   keys?.on('keydown-ENTER', () => this.startWave());
   keys?.on('keydown-ESC', () => {
-   if (this.helpUi) this.closeHelp();
+   if (this.gatherUi) this.closeGather();
+   else if (this.helpUi) this.closeHelp();
    else showPauseMenu(this);
   });
 
@@ -193,12 +218,23 @@ export class BuildScene extends Phaser.Scene {
   start.on('pointerdown', () => this.startWave());
   mono(this, START_BTN.x, START_BTN.y, '[ START WAVE ]', '24px', '#7fd07f').setOrigin(0.5).setDepth(DEPTH.slot);
 
+  this.gravityBtn = this.add.rectangle(GRAVITY_BTN.x, GRAVITY_BTN.y, GRAVITY_BTN.w, GRAVITY_BTN.h, 0x2a2418, 1);
+  this.gravityBtn.setStrokeStyle(3, 0xd0a85f).setDepth(DEPTH.ui).setInteractive({ useHandCursor: true });
+  this.gravityBtn.on('pointerdown', () => this.activateGravity());
+  this.gravityLabel = mono(this, GRAVITY_BTN.x, GRAVITY_BTN.y, '[ ACTIVATE GRAVITY ]', '18px', '#e0b860');
+  this.gravityLabel.setOrigin(0.5).setDepth(DEPTH.slot);
+
   const menu = mono(this, GAME_WIDTH - 60, 28, '[ MENU ]', '16px', '#e8e0d0');
   menu.setOrigin(0.5).setPadding(12, 8).setDepth(DEPTH.ui).setInteractive({ useHandCursor: true });
   menu.on('pointerdown', () => showPauseMenu(this));
   const help = mono(this, GAME_WIDTH - 180, 28, '[ HELP ]', '16px', '#c8c2b8');
   help.setOrigin(0.5).setPadding(12, 8).setDepth(DEPTH.ui).setInteractive({ useHandCursor: true });
   help.on('pointerdown', () => this.openHelp());
+
+  const gather = this.add.rectangle(GATHER_BTN.x, GATHER_BTN.y, GATHER_BTN.w, GATHER_BTN.h, 0x18222a, 1);
+  gather.setStrokeStyle(3, 0x5f9fd0).setDepth(DEPTH.ui).setInteractive({ useHandCursor: true });
+  gather.on('pointerdown', () => this.openGather());
+  mono(this, GATHER_BTN.x, GATHER_BTN.y, '[ GATHER JUNK ]', '18px', '#8fc0e8').setOrigin(0.5).setDepth(DEPTH.slot);
  }
 
  private onPointerMove(x: number, y: number): void {
@@ -479,12 +515,27 @@ export class BuildScene extends Phaser.Scene {
   this.updateHint();
  }
 
- /** One switch for the simulation: pieces in hand and pending endpoints must not drift. */
+ /**
+  * One switch for the simulation: pieces in hand and pending endpoints must not drift, and nothing
+  * moves at all until ACTIVATE GRAVITY. Pause and resume are idempotent, so this always applies.
+  */
  private setPhysicsPaused(paused: boolean): void {
-  if (paused === this.physicsPaused) return;
   this.physicsPaused = paused;
-  if (paused) this.matter.world.pause();
+  if (paused || !this.gravityOn) this.matter.world.pause();
   else this.matter.world.resume();
+ }
+
+ /** One-way for this build: the button stays lit until the next build entry resets it. */
+ private activateGravity(): void {
+  sfx.unlock();
+  if (this.gravityOn) return;
+  this.gravityOn = true;
+  this.setPhysicsPaused(this.physicsPaused);
+  this.gravityBtn.setFillStyle(0x1c1c1c, 1).setStrokeStyle(2, 0x3a3a3a).disableInteractive();
+  this.gravityLabel.setText('[ GRAVITY ON ]').setColor('#7fd07f');
+  sfx.place();
+  this.updateGuide();
+  this.updateHint();
  }
 
  private updateGhostAt(x: number, y: number): void {
@@ -519,14 +570,11 @@ export class BuildScene extends Phaser.Scene {
   this.slotUi = [];
   this.slots = [];
 
-  const counts: Record<ItemType, number> = { plank: 0, metal_sheet: 0, chain: 0, nail: 0, anvil: 0, propane: 0 };
-  for (const item of runStore.get().inventory) counts[item.type] += 1;
-
   // Fixed order: slots must never reshuffle under the pointer as junk is spent.
   PALETTE_ORDER.forEach((type, index) => {
    const cy = SLOT_TOP + index * (SLOT_H + SLOT_GAP) + SLOT_H / 2;
    const def = ITEM_DEFINITIONS[type];
-   const count = counts[type];
+   const count = runStore.get().inventory.filter((item) => item.type === type).length;
    const spent = count === 0;
    const active = type === this.selectedType;
    const rect = this.add.rectangle(SLOT_X, cy, SLOT_W, SLOT_H, active ? 0x2a3a2a : 0x1c1c1c, 1);
@@ -570,7 +618,7 @@ export class BuildScene extends Phaser.Scene {
  private updateHint(): void {
   const picking = this.chainFirst !== null && (this.mode === 'chain' || this.mode === 'nail');
   if (!picking) {
-   this.hintText.setText(HINTS[this.mode]);
+   this.hintText.setText((!this.gravityOn && GRAVITY_OFF_HINTS[this.mode]) || HINTS[this.mode]);
    return;
   }
   this.hintText.setText(this.mode === 'nail'
@@ -593,10 +641,41 @@ export class BuildScene extends Phaser.Scene {
   if (this.mode !== 'moving' && !this.chainFirst) this.setPhysicsPaused(false);
  }
 
- /** First run only: a 5-step checklist that ticks itself off as the fort takes shape. */
+ private openGather(): void {
+  if (this.gatherUi || this.helpUi) return;
+  sfx.unlock();
+  this.structureManager.syncBuildPoses();
+  this.gatherResumePaused = this.physicsPaused;
+  this.setPhysicsPaused(true);
+  this.showGather();
+ }
+
+ /** Redrawn after every claim, so a gathered card reads GATHERED at once. */
+ private showGather(): void {
+  for (const obj of this.gatherUi ?? []) obj.destroy();
+  this.gatherUi = showGatherPanel(this, runStore.get().gatheredLocations, (id) => this.gather(id), () => this.closeGather());
+ }
+
+ private gather(id: JunkLocationId): void {
+  if (!runStore.gatherJunk(id)) {
+   sfx.deny();
+   return;
+  }
+  sfx.place();
+  this.renderInventory();
+  this.showGather();
+ }
+
+ private closeGather(): void {
+  for (const obj of this.gatherUi ?? []) obj.destroy();
+  this.gatherUi = null;
+  this.setPhysicsPaused(this.gatherResumePaused);
+ }
+
+ /** First run only: a 7-step checklist that ticks itself off as the fort takes shape. */
  private maybeShowGuide(): void {
   if (hasSeenHowTo()) return;
-  const panel = this.add.rectangle(236, 148, 448, 132, 0x101010, 0.92);
+  const panel = this.add.rectangle(236, 160, 448, 156, 0x101010, 0.92);
   // Interactive so arena clicks landing on the panel never place junk behind it.
   panel.setStrokeStyle(1, 0x3a3a3a).setDepth(DEPTH.ui).setInteractive();
   this.guidePanel = panel;
@@ -616,14 +695,17 @@ export class BuildScene extends Phaser.Scene {
   const placed = runStore.get().placedObjects.length;
   const chained = runStore.get().chains.length > 0;
   const nailed = runStore.get().nails.length > 0;
+  const gathered = runStore.get().gatheredLocations.length > 0;
   text.setText(
    [
     'FIRST FORT - zombies enter right, guard the CORE:',
-    `${placed > 0 ? '[x]' : '[ ]'} 1. Click junk (right), click arena - it falls`,
-    `${placed >= 3 ? '[x]' : '[ ]'} 2. Place ${placed >= 3 ? '3/3' : `${placed}/3`} pieces - Q/E angles metal`,
-    `${nailed ? '[x]' : '[ ]'} 3. Nail two touching pieces, or nail junk to ground`,
-    `${chained ? '[x]' : '[ ]'} 4. Chain the anvil, then move it mid-air to hang it`,
-    '[ ] 5. START WAVE (top) when ready',
+    `${gathered ? '[x]' : '[ ]'} 1. Optional: GATHER JUNK (top-left) for extra junk`,
+    `${placed > 0 ? '[x]' : '[ ]'} 2. Click junk, then BUILD AREA - no gravity yet`,
+    `${placed >= 3 ? '[x]' : '[ ]'} 3. Place ${placed >= 3 ? '3/3' : `${placed}/3`} pieces - Q/E angles metal`,
+    `${nailed ? '[x]' : '[ ]'} 4. Nail two touching pieces, or nail junk to ground`,
+    `${chained ? '[x]' : '[ ]'} 5. Chain the anvil, then move it mid-air to hang it`,
+    `${this.gravityOn ? '[x]' : '[ ]'} 6. ACTIVATE GRAVITY (top) to see what holds`,
+    '[ ] 7. START WAVE (top) when ready',
    ].join('\n'),
   );
  }
@@ -638,6 +720,7 @@ export class BuildScene extends Phaser.Scene {
  }
 
  private startWave(): void {
+  if (this.gatherUi) return;
   if (this.helpUi) {
    this.closeHelp();
    return;
@@ -662,17 +745,31 @@ export class BuildScene extends Phaser.Scene {
    mode: this.mode,
    selected: this.selectedType,
    helpOpen: this.helpUi !== null,
+   gatherOpen: this.gatherUi !== null,
+   gatheredLocations: [...run.gatheredLocations],
    ghostRotation: this.ghostRotation,
    lastRejection: this.lastRejection,
    placed: run.placedObjects.map((o) => ({ id: o.id, type: o.type, x: o.x, y: o.y, rotation: o.rotation, hp: o.hp })),
    chains: run.chains.map((c) => ({ id: c.id, a: c.anchorA.objectId, b: c.anchorB.objectId, hp: c.hp })),
    nails: run.nails.map((n) => ({ id: n.id, a: n.anchorA.objectId, b: n.anchorB.objectId, anchorA: n.anchorA, anchorB: n.anchorB })),
    pendingAnchor: this.chainFirst,
-   physicsPaused: this.physicsPaused,
+   physicsPaused: !this.matter.world.enabled,
+   gravityOn: this.gravityOn,
    slots: this.slots.map((s) => ({ index: s.index, type: s.type, count: s.count, x: s.x, y: s.y, w: s.w, h: s.h })),
    startButton: {
     x: START_BTN.x - START_BTN.w / 2, y: START_BTN.y - START_BTN.h / 2, w: START_BTN.w, h: START_BTN.h,
    },
+   gravityButton: {
+    x: GRAVITY_BTN.x - GRAVITY_BTN.w / 2, y: GRAVITY_BTN.y - GRAVITY_BTN.h / 2, w: GRAVITY_BTN.w, h: GRAVITY_BTN.h,
+   },
+   gatherButton: {
+    x: GATHER_BTN.x - GATHER_BTN.w / 2, y: GATHER_BTN.y - GATHER_BTN.h / 2, w: GATHER_BTN.w, h: GATHER_BTN.h,
+   },
+   gatherLocations: JUNK_LOCATIONS.map((loc, i) => ({
+    id: loc.id, name: loc.name, claimed: run.gatheredLocations.includes(loc.id),
+    card: gatherCardRect(i), button: gatherButtonRect(i),
+   })),
+   gatherBackButton: GATHER_BACK_BTN,
   };
  }
 }

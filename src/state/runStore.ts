@@ -2,6 +2,7 @@ import type {
   ChainAnchor,
   InventoryItem,
   ItemType,
+  JunkLocationId,
   KillSource,
   Outcome,
   Phase,
@@ -10,7 +11,7 @@ import type {
   SavedChain,
   SavedNail,
 } from '../types/game';
-import { createInitialRunState, createInventoryItem } from '../data/gameData';
+import { JUNK_LOCATIONS, createInitialRunState, createInventoryItem } from '../data/gameData';
 import { DEFAULT_SEED } from '../utils/rng';
 import { GROUND_ANCHOR_ID } from '../utils/Constants';
 
@@ -40,6 +41,17 @@ export const runStore = {
     const item = createInventoryItem(type);
     runState.inventory.push(item);
     return item;
+  },
+
+  /** Grants a location's package once per run, build phase only. Returns false and changes nothing otherwise. */
+  gatherJunk(id: JunkLocationId): boolean {
+    const location = JUNK_LOCATIONS.find((loc) => loc.id === id);
+    if (!location || runState.phase !== 'build' || runState.gatheredLocations.includes(id)) return false;
+    for (const { type, count } of location.items) {
+      for (let i = 0; i < count; i++) runState.inventory.push(createInventoryItem(type));
+    }
+    runState.gatheredLocations.push(id);
+    return true;
   },
 
   removeInventoryItem(id: string): void {

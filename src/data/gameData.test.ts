@@ -12,6 +12,7 @@ import {
   createInitialRunState,
   createLoadout,
   LOADOUT_NAILS,
+  JUNK_LOCATIONS,
 } from './gameData';
 import { runStore } from '../state/runStore';
 import { ITEM_DEFINITIONS } from './items';
@@ -19,7 +20,8 @@ import { CHAIN_MAX_HP, GROUND_ANCHOR_ID, PLAYER_SPEED } from '../utils/Constants
 import { nextRng, seedRng } from '../utils/rng';
 import type { ItemType } from '../types/game';
 
-const ALLOWED_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil', 'propane'];
+/** The loadout hands over exactly one of each of these. */
+const SINGLES: ItemType[] = ['chain', 'anvil', 'propane', 'crate', 'girder', 'refrigerator'];
 
 describe('weapons', () => {
   it('gives the zombie pistol slower, weaker, less accurate fire than the survivor pistol', () => {
@@ -83,22 +85,18 @@ describe('loadout', () => {
     expect(state.coreHp).toBe(CORE_MAX_HP);
   });
 
-  it('always hands over 3-4 planks, 3-4 sheets, a fixed bag of nails, one chain, one anvil and one propane', () => {
+  it('always hands over 3-4 planks, 3-4 sheets, a fixed bag of nails and one of every other piece', () => {
     for (let seed = 0; seed < 40; seed++) {
       seedRng(seed);
       const types = createLoadout().map((item) => item.type);
-      expect(types.length).toBeGreaterThanOrEqual(9 + LOADOUT_NAILS);
-      expect(types.length).toBeLessThanOrEqual(11 + LOADOUT_NAILS);
-      for (const type of types) expect(ALLOWED_ITEMS).toContain(type);
       const count = (type: ItemType): number => types.filter((t) => t === type).length;
       expect(count('plank')).toBeGreaterThanOrEqual(3);
       expect(count('plank')).toBeLessThanOrEqual(4);
       expect(count('metal_sheet')).toBeGreaterThanOrEqual(3);
       expect(count('metal_sheet')).toBeLessThanOrEqual(4);
       expect(count('nail')).toBe(LOADOUT_NAILS);
-      expect(count('chain')).toBe(1);
-      expect(count('anvil')).toBe(1);
-      expect(count('propane')).toBe(1);
+      for (const type of SINGLES) expect(count(type)).toBe(1);
+      expect(types.length).toBe(count('plank') + count('metal_sheet') + LOADOUT_NAILS + SINGLES.length);
     }
   });
 
@@ -281,5 +279,63 @@ describe('run store bookkeeping', () => {
     runStore.reset(777);
     expect(runStore.get().seed).toBe(777);
     expect(nextRng()).toBe(firstDraw);
+  });
+});
+
+describe('junk gathering', () => {
+  const types = (): string[] => runStore.get().inventory.map((item) => item.type);
+
+  it('grants each location once, with nails and real pieces', () => {
+    runStore.reset(5);
+    for (const location of JUNK_LOCATIONS) {
+      const before = types();
+      expect(runStore.gatherJunk(location.id)).toBe(true);
+      const added = types().slice(before.length);
+      expect(added).toContain('nail');
+      expect(added.some((t) => t !== 'nail' && t !== 'chain')).toBe(true);
+
+      const afterFirst = runStore.get().inventory.slice();
+      expect(runStore.gatherJunk(location.id)).toBe(false);
+      expect(runStore.get().inventory).toEqual(afterFirst);
+    }
+  });
+
+  it('offers a distinct package at every location', () => {
+    const packages = JUNK_LOCATIONS.map((loc) => JSON.stringify(loc.items));
+    expect(new Set(packages).size).toBe(JUNK_LOCATIONS.length);
+    expect(new Set(JUNK_LOCATIONS.map((loc) => loc.id)).size).toBe(JUNK_LOCATIONS.length);
+  });
+
+  it('grants nothing during a wave', () => {
+    runStore.reset(5);
+    runStore.setPhase('wave');
+    const before = runStore.get().inventory.slice();
+    expect(runStore.gatherJunk(JUNK_LOCATIONS[0].id)).toBe(false);
+    expect(runStore.get().inventory).toEqual(before);
+    expect(runStore.get().gatheredLocations).toEqual([]);
+  });
+
+  it('keeps claims through a wave and rebuild, and reset clears claims and gathered pieces', () => {
+    runStore.reset(5);
+    const loadout = types();
+    const id = JUNK_LOCATIONS[0].id;
+    runStore.gatherJunk(id);
+    runStore.setPhase('wave');
+    runStore.setPhase('build');
+    expect(runStore.get().gatheredLocations).toEqual([id]);
+    expect(runStore.gatherJunk(id)).toBe(false);
+
+    runStore.reset(5);
+    expect(runStore.get().gatheredLocations).toEqual([]);
+    expect(types()).toEqual(loadout);
+    expect(runStore.gatherJunk(id)).toBe(true);
+  });
+
+  it('draws nothing from the rng stream', () => {
+    runStore.reset(31);
+    const untouched = nextRng();
+    runStore.reset(31);
+    for (const location of JUNK_LOCATIONS) runStore.gatherJunk(location.id);
+    expect(nextRng()).toBe(untouched);
   });
 });

@@ -14,6 +14,8 @@ const STEEL = 0x6d7681, STEEL_LIT = 0x9aa4ae, STEEL_DARK = 0x4a525b;
 const IRON = 0x1c1e22, IRON_LIT = 0x3c4249, RUST = 0x8a5a3a, OUTLINE = 0x171a15;
 // The one red family in the game, so a propane tank never reads as scrap metal.
 const TANK = 0xb23a2c, TANK_LIT = 0xd8735c, TANK_DARK = 0x7a2318;
+// Old enamel white, so the fridge reads as an appliance and not as steel plate.
+const ENAMEL = 0xcfc8b4, ENAMEL_LIT = 0xe6e0cc, ENAMEL_DARK = 0x948c78;
 const Z_SKIN = 0x7d9a63, Z_SKIN_DARK = 0x556b45, Z_RAG = 0x4d5f42, Z_LEG = 0x3f4f36;
 const P_JACKET = 0x46586b, P_JACKET_DARK = 0x36455a, P_SKIN = 0xc09a6b, P_CAP = 0x2a2f36;
 
@@ -235,6 +237,133 @@ function drawPropane(scene: Phaser.Scene): void {
   });
 
   grain(tex, 8, 2, 2);
+}
+
+/** Board box: plank faces between end battens, one diagonal brace, nails at the corners. */
+function drawCrate(scene: Phaser.Scene): void {
+  const tex = paint(scene, 'crate', 70, 70, (g) => {
+    g.fillStyle(WOOD_DARK, 1);
+    g.fillRect(0, 0, 70, 70);
+    // Three boards with a dark seam between, each with the plank's lit top and shaded foot.
+    for (let b = 0; b < 3; b++) {
+      const y = 1 + b * 23;
+      g.fillStyle(WOOD, 1);
+      g.fillRect(1, y, 68, 21);
+      g.fillStyle(WOOD_LIT, 0.8);
+      g.fillRect(1, y, 68, 2);
+      g.fillStyle(WOOD_DARK, 0.7);
+      g.fillRect(1, y + 19, 68, 2);
+    }
+
+    for (let k = 0; k < 12; k++) {
+      g.fillStyle(hash2(k, 131) < 0.35 ? WOOD_DARK : WOOD_LIT, 0.35);
+      g.fillRect(Math.floor(hash2(k, 133) * 50), 3 + Math.floor(hash2(k, 137) * 64), 8 + Math.floor(hash2(k, 139) * 30), 1);
+    }
+
+    // The battens and the brace are what turn three boards into a box.
+    g.fillStyle(WOOD_END, 1);
+    g.fillRect(0, 0, 9, 70);
+    g.fillRect(61, 0, 9, 70);
+    g.lineStyle(8, WOOD_END, 1);
+    g.lineBetween(9, 64, 61, 6);
+    g.lineStyle(1, WOOD_LIT, 0.7);
+    g.lineBetween(9, 59, 58, 4);
+
+    g.fillStyle(0x4c4a44, 1);
+    for (const x of [4.5, 65.5]) {
+      for (const y of [5, 35, 65]) g.fillCircle(x, y, 1.5);
+    }
+    g.lineStyle(1, OUTLINE, 0.85);
+    g.strokeRect(0.5, 0.5, 69, 69);
+  });
+
+  grain(tex, 12, 1, 5);
+}
+
+/** I-beam side view: bright flanges, a shaded web with lightening holes, bolt pairs at each end. */
+function drawGirder(scene: Phaser.Scene): void {
+  const tex = paint(scene, 'girder', 190, 20, (g) => {
+    g.fillStyle(STEEL_DARK, 1);
+    g.fillRect(0, 0, 190, 20);
+    g.fillStyle(0x59616b, 1);
+    g.fillRect(1, 5, 188, 10);
+    // Flanges stand proud of the web: that step is what says "beam", not "sheet".
+    g.fillStyle(STEEL, 1);
+    g.fillRect(1, 1, 188, 4);
+    g.fillRect(1, 15, 188, 4);
+    g.fillStyle(STEEL_LIT, 1);
+    g.fillRect(1, 1, 188, 1);
+    g.fillRect(1, 15, 188, 1);
+    g.fillStyle(0x3a4148, 1);
+    g.fillRect(1, 5, 188, 1);
+
+    for (let x = 30; x < 170; x += 26) {
+      g.fillStyle(0x23282d, 1);
+      g.fillEllipse(x, 10, 12, 6);
+      g.lineStyle(1, STEEL_LIT, 0.5);
+      g.strokeEllipse(x, 10.5, 12, 6);
+    }
+
+    for (const x of [7, 14, 176, 183]) {
+      for (const y of [7, 13]) {
+        g.fillStyle(0x3a4148, 1);
+        g.fillCircle(x, y, 2);
+        g.fillStyle(0xb9c1c9, 1);
+        g.fillCircle(x, y, 1);
+      }
+    }
+
+    g.fillStyle(RUST, 0.7);
+    g.fillRect(118, 15, 14, 4);
+    g.fillRect(60, 6, 5, 8);
+    g.fillStyle(0xa16a42, 0.55);
+    g.fillRect(121, 16, 7, 2);
+  });
+
+  grain(tex, 7, 3, 1);
+}
+
+/** Upright fridge: freezer door over the main door, chrome handles on the hinge-free side. */
+function drawRefrigerator(scene: Phaser.Scene): void {
+  const tex = paint(scene, 'refrigerator', 80, 130, (g) => {
+    g.fillStyle(ENAMEL_DARK, 1);
+    g.fillRoundedRect(0, 0, 80, 130, 6);
+    g.fillStyle(ENAMEL, 1);
+    g.fillRoundedRect(1, 1, 78, 124, 5);
+    // Light left, shade right: same trick as the propane tank, so the box has depth.
+    g.fillStyle(ENAMEL_LIT, 0.8);
+    g.fillRect(4, 4, 5, 116);
+    g.fillStyle(ENAMEL_DARK, 0.55);
+    g.fillRect(71, 4, 6, 118);
+
+    // Door seam and kick plate.
+    g.fillStyle(0x3b3830, 1);
+    g.fillRect(1, 40, 78, 3);
+    g.fillStyle(0x2c2a25, 1);
+    g.fillRect(4, 124, 72, 6);
+    g.fillStyle(0x4a463d, 1);
+    for (let x = 8; x < 72; x += 6) g.fillRect(x, 125, 3, 4);
+
+    // Chrome handles: the one bright vertical stroke that reads as "fridge" at slot size.
+    g.fillStyle(STEEL_DARK, 1);
+    g.fillRoundedRect(62, 12, 6, 22, 2);
+    g.fillRoundedRect(62, 50, 6, 44, 2);
+    g.fillStyle(0xd8dee4, 1);
+    g.fillRect(63, 13, 2, 20);
+    g.fillRect(63, 51, 2, 42);
+
+    g.fillStyle(RUST, 0.7);
+    g.fillRect(10, 108, 12, 8);
+    g.fillRect(48, 114, 9, 6);
+    g.fillRect(70, 36, 5, 10);
+    g.fillStyle(0xa16a42, 0.55);
+    g.fillRect(12, 110, 6, 4);
+
+    g.lineStyle(1, OUTLINE, 0.85);
+    g.strokeRoundedRect(0.5, 0.5, 79, 129, 6);
+  });
+
+  grain(tex, 6, 2, 2);
 }
 
 /** Nail head lower left, shaft driven up and right: the angle reads as "driven into" at slot size. */
@@ -622,6 +751,9 @@ export function createTextures(scene: Phaser.Scene): void {
   drawMetalSheet(scene);
   drawAnvil(scene);
   drawPropane(scene);
+  drawCrate(scene);
+  drawGirder(scene);
+  drawRefrigerator(scene);
   drawChain(scene);
   drawNail(scene);
   drawDamage(scene);

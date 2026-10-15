@@ -1,4 +1,6 @@
-export type ItemType = 'plank' | 'metal_sheet' | 'chain' | 'nail' | 'anvil' | 'propane';
+export type ItemType = 'plank' | 'metal_sheet' | 'chain' | 'nail' | 'anvil' | 'propane' | 'crate' | 'girder' | 'refrigerator';
+
+export type JunkLocationId = 'hardware' | 'restaurant' | 'junkyard' | 'construction';
 
 export interface InventoryItem {
   id: string;
@@ -58,6 +60,8 @@ export interface RunState {
   outcome: Outcome;
   waveEnded: boolean;
   inventory: InventoryItem[];
+  /** Locations already gathered from this run. Each location supplies once. */
+  gatheredLocations: JunkLocationId[];
   placedObjects: SavedBuildObject[];
   chains: SavedChain[];
   nails: SavedNail[];

@@ -1,4 +1,4 @@
-import type { InventoryItem, ItemType, RunState } from '../types/game';
+import type { InventoryItem, ItemType, JunkLocationId, RunState } from '../types/game';
 import { ITEM_DEFINITIONS } from './items';
 import { DEFAULT_SEED, randInt, seedRng } from '../utils/rng';
 
@@ -24,15 +24,6 @@ export const WEAPONS: Record<WeaponType, WeaponStats> = {
  zombie_pistol: { damage: 8, fireRate: 1.1, bulletSpeed: 700, spreadDeg: 6 },
 };
 
-export const ITEM_NAMES: Record<ItemType, string> = {
- plank: ITEM_DEFINITIONS.plank.name,
- metal_sheet: ITEM_DEFINITIONS.metal_sheet.name,
- chain: ITEM_DEFINITIONS.chain.name,
- nail: ITEM_DEFINITIONS.nail.name,
- anvil: ITEM_DEFINITIONS.anvil.name,
- propane: ITEM_DEFINITIONS.propane.name,
-};
-
 export interface WaveSpawn {
  /** Milliseconds after wave start. */
  at: number;
@@ -55,15 +46,15 @@ let inventoryIdCounter = 0;
 
 /**
  * Fixed count, not drawn from the rng stream, so the seeded rolls stay stable.
- * The largest loadout is 4 planks + 4 sheets + 1 anvil + 1 propane = 10 pieces, so 12 nails
- * still covers every joint.
+ * The largest loadout is 4 planks + 4 sheets + anvil + propane + crate + girder + refrigerator
+ * = 13 pieces. One connected fort needs 12 joints plus a ground nail, so 16 nails leave 3 spare.
  */
-export const LOADOUT_NAILS = 12;
+export const LOADOUT_NAILS = 16;
 
 /** Single id source for inventory items, so build-time placement ids stay unique. */
 export function createInventoryItem(type: ItemType): InventoryItem {
  inventoryIdCounter += 1;
- return { id: `item-${inventoryIdCounter}`, type, name: ITEM_NAMES[type] };
+ return { id: `item-${inventoryIdCounter}`, type, name: ITEM_DEFINITIONS[type].name };
 }
 
 export function createLoadout(): InventoryItem[] {
@@ -76,8 +67,46 @@ export function createLoadout(): InventoryItem[] {
  items.push(createInventoryItem('chain'));
  items.push(createInventoryItem('anvil'));
  items.push(createInventoryItem('propane'));
+ items.push(createInventoryItem('crate'));
+ items.push(createInventoryItem('girder'));
+ items.push(createInventoryItem('refrigerator'));
  return items;
 }
+
+export interface JunkLocation {
+ id: JunkLocationId;
+ name: string;
+ description: string;
+ items: readonly { type: ItemType; count: number }[];
+}
+
+/** Fixed packages, not drawn from the rng stream, so gathering never shifts the seeded rolls. */
+export const JUNK_LOCATIONS: readonly JunkLocation[] = [
+ {
+  id: 'hardware',
+  name: 'Hardware Store',
+  description: 'Shelves of lumber, sheet metal and fasteners.',
+  items: [{ type: 'plank', count: 3 }, { type: 'metal_sheet', count: 2 }, { type: 'chain', count: 1 }, { type: 'nail', count: 6 }],
+ },
+ {
+  id: 'restaurant',
+  name: 'Restaurant',
+  description: 'Kitchen gas, a dead fridge and delivery crates.',
+  items: [{ type: 'propane', count: 2 }, { type: 'refrigerator', count: 1 }, { type: 'crate', count: 2 }, { type: 'nail', count: 6 }],
+ },
+ {
+  id: 'junkyard',
+  name: 'Junkyard',
+  description: 'Heavy scrap: steel, a girder and an anvil.',
+  items: [{ type: 'metal_sheet', count: 2 }, { type: 'girder', count: 1 }, { type: 'anvil', count: 1 }, { type: 'chain', count: 1 }, { type: 'nail', count: 6 }],
+ },
+ {
+  id: 'construction',
+  name: 'Construction Site',
+  description: 'Leftover planks, crates and a steel girder.',
+  items: [{ type: 'plank', count: 2 }, { type: 'crate', count: 2 }, { type: 'girder', count: 1 }, { type: 'nail', count: 6 }],
+ },
+];
 
 export function createInitialRunState(seed: number = DEFAULT_SEED): RunState {
  // The loadout is drawn from the rng stream, so seeding here makes a run reproducible from its seed.
@@ -88,6 +117,7 @@ export function createInitialRunState(seed: number = DEFAULT_SEED): RunState {
   outcome: 'none',
   waveEnded: false,
   inventory: createLoadout(),
+  gatheredLocations: [],
   placedObjects: [],
   chains: [],
   nails: [],
