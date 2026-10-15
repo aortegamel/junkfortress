@@ -278,7 +278,7 @@ function defeatScenario(): DebugScenario {
 /**
  * Jump rig: four planks stacked flat, the bottom one on the ground and each nailed to the plank
  * below, so the whole column is frozen and its top is a 160px ledge at y=572 (x 360..520). That
- * ledge stands 88px above the arena ground, inside the ~125px a jump clears. The rig carries no
+ * ledge stands 88px above the arena ground, well inside the ~185px a jump clears. The rig carries no
  * zombies, so keepAlive holds the wave open while the harness drives the player.
  */
 function platformScenario(): DebugScenario {

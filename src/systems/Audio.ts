@@ -5,13 +5,35 @@
  */
 const MIN_GAP_MS = 45;
 const MASTER_GAIN = 0.25;
+/**
+ * Post-compressor gain of the explosion route, 4x the shared route's MASTER_GAIN (+12 dB). The
+ * compressor is not a hard peak cap, so this gain sets the blast level, not a clipping guarantee.
+ */
+const BLAST_GAIN = 1;
 const NOISE_SECONDS = 0.5;
 
 let ctx: AudioContext | null = null;
 let bus: AudioNode | null = null;
+/** A separate compressor keeps the blast contrast: on the shared one it squashes to pistol level. */
+let blastBus: AudioNode | null = null;
 let noiseBuffer: AudioBuffer | null = null;
 let unavailable = false;
 const lastPlayed: Record<string, number> = {};
+
+/** A storm can stack several voices inside one frame; the compressor tames their summed peaks. */
+function limitedRoute(context: AudioContext, gain: number): AudioNode {
+ const out = context.createGain();
+ out.gain.value = gain;
+ const limiter = context.createDynamicsCompressor();
+ limiter.threshold.value = -12;
+ limiter.knee.value = 6;
+ limiter.ratio.value = 12;
+ limiter.attack.value = 0.003;
+ limiter.release.value = 0.12;
+ limiter.connect(out);
+ out.connect(context.destination);
+ return limiter;
+}
 
 function unlock(): void {
  if (unavailable) return;
@@ -24,20 +46,9 @@ function unlock(): void {
    }
 
    const context = new window.AudioContext();
-   const master = context.createGain();
-   master.gain.value = MASTER_GAIN;
-   // A storm can stack several voices inside one frame; the limiter keeps the bus from clipping.
-   const limiter = context.createDynamicsCompressor();
-   limiter.threshold.value = -12;
-   limiter.knee.value = 6;
-   limiter.ratio.value = 12;
-   limiter.attack.value = 0.003;
-   limiter.release.value = 0.12;
-   limiter.connect(master);
-   master.connect(context.destination);
-
    ctx = context;
-   bus = limiter;
+   bus = limitedRoute(context, MASTER_GAIN);
+   blastBus = limitedRoute(context, BLAST_GAIN);
    noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * NOISE_SECONDS), context.sampleRate);
    const samples = noiseBuffer.getChannelData(0);
    for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
@@ -48,6 +59,7 @@ function unlock(): void {
   unavailable = true;
   ctx = null;
   bus = null;
+  blastBus = null;
   noiseBuffer = null;
  }
 }
@@ -65,9 +77,8 @@ function ready(name: string): boolean {
 }
 
 /** Pitched partial with a percussive attack and an exponential tail. */
-function tone(type: OscillatorType, f0: number, f1: number, dur: number, gain: number, delay = 0): void {
+function tone(type: OscillatorType, f0: number, f1: number, dur: number, gain: number, delay = 0, out = bus): void {
  const audio = ctx;
- const out = bus;
  if (!audio || !out) return;
 
  try {
@@ -88,9 +99,8 @@ function tone(type: OscillatorType, f0: number, f1: number, dur: number, gain: n
 }
 
 /** Filtered slice of the shared noise buffer, used for cracks, crunches and hiss. */
-function noise(dur: number, gain: number, kind: BiquadFilterType, f0: number, f1 = f0, q = 1, delay = 0): void {
+function noise(dur: number, gain: number, kind: BiquadFilterType, f0: number, f1 = f0, q = 1, delay = 0, out = bus): void {
  const audio = ctx;
- const out = bus;
  const buffer = noiseBuffer;
  if (!audio || !out || !buffer) return;
 
@@ -193,10 +203,10 @@ export const sfx = {
 
  explosion(): void {
   if (!ready('explosion')) return;
-  noise(0.55, 0.5, 'lowpass', 1500, 110, 0.7);
-  noise(0.05, 0.35, 'highpass', 3400, 2600, 0.7, 0.012);
-  tone('sine', 130, 32, 0.7, 0.55);
-  tone('triangle', 240, 70, 0.4, 0.16);
+  noise(0.55, 0.5, 'lowpass', 1500, 110, 0.7, 0, blastBus);
+  noise(0.05, 0.35, 'highpass', 3400, 2600, 0.7, 0.012, blastBus);
+  tone('sine', 130, 32, 0.7, 0.55, 0, blastBus);
+  tone('triangle', 240, 70, 0.4, 0.16, 0, blastBus);
  },
 
  zombieDeath(): void {

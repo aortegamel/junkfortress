@@ -5,12 +5,17 @@ import { WEAPONS } from '../data/gameData';
 const HIT_FLASH_MS = 90;
 /** Matter wants px/step; PLAYER_SPEED is px/sec. */
 const PLAYER_STEP_SPEED = PLAYER_SPEED / STEPS_PER_SECOND;
-/** ~125px of clearance: enough to hop onto a plank stack, not enough to leave the arena. */
-const JUMP_SPEED = 500;
+/** ~185px of rise (Matter's 0.01 air drag included): clears a 4-plank stack with room to spare. */
+const JUMP_SPEED = 700;
 const JUMP_STEP_SPEED = JUMP_SPEED / STEPS_PER_SECOND;
 /** The 44px collider ends at centre + 22, so the probe runs from just inside the sole to 6px past it. */
 const FOOT_PROBE_FROM = 17;
 const FOOT_PROBE_TO = 28;
+/**
+ * px/step. A plank landing (restitution 0.04) can bounce the body up by about 0.5 px/step for a
+ * frame or two, so only a faster climb is a flight. A jump starts at JUMP_SPEED / 60, ~11.7 px/step.
+ */
+const MAX_LANDING_BOUNCE = 1;
 const HIT_FLASH_TINT = 0xff6a5a;
 
 export class Player {
@@ -80,14 +85,15 @@ export class Player {
 
  /**
   * Matter's ray query over the world bodies: one short probe under the sole is the whole ground
-  * test. The ray runs straight down the body centre, so a wall beside the player never grounds it,
-  * and only a solid body counts: sensors are not floor.
+  * test. The ray runs straight down the body centre, so a wall beside the player never grounds it.
+  * Only a body the player collides with counts: sensors and zombies (which the player walks
+  * through) are not floor, or every zombie in the horde would hand out an air jump.
   */
  private grounded(): boolean {
   const body = this.sprite.body as MatterJS.BodyType | null;
   if (body === null) return false;
   // Still climbing: an upward flight owns the body until gravity brings it back down.
-  if (body.velocity.y < 0) return false;
+  if (body.velocity.y < -MAX_LANDING_BOUNCE) return false;
   const world = this.scene.matter.world.localWorld as unknown as MatterJS.CompositeType;
   const x = body.position.x;
   const y = body.position.y;
@@ -97,7 +103,9 @@ export class Player {
    { x, y: y + FOOT_PROBE_FROM },
    { x, y: y + FOOT_PROBE_TO },
   ) as unknown as Array<{ body: MatterJS.BodyType }>;
-  return hits.some((hit) => hit.body !== body && !hit.body.isSensor);
+  // No collision groups exist here, so the category/mask test is Matter's whole canCollide rule.
+  return hits.some((hit) => hit.body !== body && !hit.body.isSensor
+   && (hit.body.collisionFilter.mask & body.collisionFilter.category) !== 0);
  }
 
  /** Damage feedback for the owning scene; the tint clears itself in update(). */
