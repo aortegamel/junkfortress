@@ -19,7 +19,7 @@ import { CHAIN_MAX_HP, GROUND_ANCHOR_ID, PLAYER_SPEED } from '../utils/Constants
 import { nextRng, seedRng } from '../utils/rng';
 import type { ItemType } from '../types/game';
 
-const ALLOWED_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil'];
+const ALLOWED_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil', 'propane'];
 
 describe('weapons', () => {
   it('gives the zombie pistol slower, weaker, less accurate fire than the survivor pistol', () => {
@@ -83,12 +83,12 @@ describe('loadout', () => {
     expect(state.coreHp).toBe(CORE_MAX_HP);
   });
 
-  it('always hands over 3-4 planks, 3-4 sheets, a fixed bag of nails, one chain and one anvil', () => {
+  it('always hands over 3-4 planks, 3-4 sheets, a fixed bag of nails, one chain, one anvil and one propane', () => {
     for (let seed = 0; seed < 40; seed++) {
       seedRng(seed);
       const types = createLoadout().map((item) => item.type);
-      expect(types.length).toBeGreaterThanOrEqual(8 + LOADOUT_NAILS);
-      expect(types.length).toBeLessThanOrEqual(10 + LOADOUT_NAILS);
+      expect(types.length).toBeGreaterThanOrEqual(9 + LOADOUT_NAILS);
+      expect(types.length).toBeLessThanOrEqual(11 + LOADOUT_NAILS);
       for (const type of types) expect(ALLOWED_ITEMS).toContain(type);
       const count = (type: ItemType): number => types.filter((t) => t === type).length;
       expect(count('plank')).toBeGreaterThanOrEqual(3);
@@ -98,6 +98,7 @@ describe('loadout', () => {
       expect(count('nail')).toBe(LOADOUT_NAILS);
       expect(count('chain')).toBe(1);
       expect(count('anvil')).toBe(1);
+      expect(count('propane')).toBe(1);
     }
   });
 
@@ -128,10 +129,11 @@ describe('loadout', () => {
 });
 
 describe('run store bookkeeping', () => {
-  it('reset() restores full hp, build phase and empty fort', () => {
+  it('reset() restores full hp, build phase, empty fort and cleared stats', () => {
     runStore.reset();
     runStore.damagePlayer(30);
     runStore.damageCore(500);
+    runStore.addKill('explosion');
     runStore.setPhase('wave');
     runStore.setWaveEnded(true);
     runStore.setOutcome('defeat');
@@ -143,6 +145,8 @@ describe('run store bookkeeping', () => {
     expect(state.phase).toBe('build');
     expect(state.waveEnded).toBe(false);
     expect(state.outcome).toBe('none');
+    expect(state.stats.totalKills).toBe(0);
+    expect(state.stats.explosionKills).toBe(0);
     expect(state.placedObjects).toEqual([]);
     expect(state.chains).toEqual([]);
     expect(state.nails).toEqual([]);
@@ -162,12 +166,14 @@ describe('run store bookkeeping', () => {
     runStore.addKill('ricochet');
     runStore.addKill('ricochet');
     runStore.addKill('crush');
+    runStore.addKill('explosion');
 
     const { stats } = runStore.get();
-    expect(stats.totalKills).toBe(4);
+    expect(stats.totalKills).toBe(5);
     expect(stats.playerKills).toBe(1);
     expect(stats.ricochetKills).toBe(2);
     expect(stats.crushKills).toBe(1);
+    expect(stats.explosionKills).toBe(1);
   });
 
   it('counts zombie bullets, ricochets and lost structures', () => {

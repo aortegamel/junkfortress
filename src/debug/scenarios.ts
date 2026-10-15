@@ -297,11 +297,36 @@ function platformScenario(): DebugScenario {
  return { name: 'platform', keepAlive: true, build: { placedObjects: objects, nails }, zombies: [] };
 }
 
+/**
+ * Propane rig: two 46px tanks standing edge to edge at 620 and 666, plus one stationary zombie
+ * 74px past tank B. The harness shoots tank A, A detonates, B chains off A, and the zombie dies
+ * to blast damage from either tank. The shooter faces away from the tanks, so its own ricochets
+ * cannot end the wave before the harness has finished draining tank A.
+ */
+function propaneScenario(): DebugScenario {
+ const tank = ITEM_DEFINITIONS.propane;
+ const tankAX = 620;
+ const tankBX = tankAX + tank.width;
+ const zombieX = 740;
+ const y = GROUND_Y - tank.height / 2;
+ return {
+  name: 'propane',
+  build: {
+   placedObjects: [
+    buildObject('propane-a', 'propane', tankAX, y, 0),
+    buildObject('propane-b', 'propane', tankBX, y, 0),
+   ],
+  },
+  zombies: [zombie(zombieX, { stationary: true, aimAt: { x: zombieX + 300, y: y } })],
+ };
+}
+
 export const SCENARIOS: Record<string, DebugScenario> = {
  ricochet: ricochetScenario(),
  collapse: collapseScenario(),
  anvil: anvilScenario(),
  platform: platformScenario(),
+ propane: propaneScenario(),
  victory: victoryScenario(),
  defeat: defeatScenario(),
 };

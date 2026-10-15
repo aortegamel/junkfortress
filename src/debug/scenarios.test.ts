@@ -3,6 +3,8 @@ import { SCENARIOS } from './scenarios';
 import type { DebugScenario } from './scenarios';
 import { groundedNailObjects, nailPlacementCheck, objectRect } from '../systems/StructureSystem';
 import { ITEM_DEFINITIONS } from '../data/items';
+import { ZOMBIE_HP } from '../data/gameData';
+import { explosionDamage } from '../utils/Explosion';
 import { GROUND_Y } from '../utils/Constants';
 import type { ChainAnchor, SavedBuildObject, SavedNail } from '../types/game';
 
@@ -64,5 +66,20 @@ describe('scenario rigs', () => {
   expect(Math.max(...rects.map((r) => r.x + r.width))).toBe(520);
   expect(platform.keepAlive).toBe(true);
   expect(platform.zombies).toHaveLength(0);
+ });
+
+ it('stands the propane rig on the ground, tanks touching and the zombie inside both blasts', () => {
+  const rig = SCENARIOS.propane;
+  const tanks = rig.build!.placedObjects;
+  const rects = tanks.map((obj) => objectRect(obj, ITEM_DEFINITIONS[obj.type]));
+  for (const rect of rects) expect(rect.y + rect.height).toBe(GROUND_Y);
+  // Touching, so the neighbour sits at exactly 46px: 231 damage against its 180hp.
+  expect(rects[1].x - (rects[0].x + rects[0].width)).toBe(0);
+
+  const [tankA, tankB] = tanks;
+  const target = rig.zombies[0];
+  // 120px from tank A and 74px from tank B: inside the lethal range of either blast.
+  expect(explosionDamage(Math.abs(target.x - tankA.x))).toBeGreaterThanOrEqual(ZOMBIE_HP);
+  expect(explosionDamage(Math.abs(target.x - tankB.x))).toBeGreaterThanOrEqual(ZOMBIE_HP);
  });
 });

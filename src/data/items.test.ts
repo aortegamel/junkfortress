@@ -3,10 +3,10 @@ import { ITEM_DEFINITIONS, MATERIAL_DAMAGE_MULTIPLIER } from './items';
 import type { ItemType } from '../types/game';
 import { CHAIN_MAX_HP } from '../utils/Constants';
 
-const ALL_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil'];
+const ALL_ITEMS: ItemType[] = ['plank', 'metal_sheet', 'chain', 'nail', 'anvil', 'propane'];
 
 describe('item definitions', () => {
-  it('defines exactly the five junk items', () => {
+  it('defines exactly the six junk items', () => {
     expect(Object.keys(ITEM_DEFINITIONS).sort()).toEqual([...ALL_ITEMS].sort());
   });
 
@@ -28,6 +28,12 @@ describe('item definitions', () => {
     expect(ITEM_DEFINITIONS.chain).toMatchObject({ material: 'metal', maxHp: 60, massKg: 2, width: 24, height: 24, shape: 'chain' });
     expect(ITEM_DEFINITIONS.nail).toMatchObject({ material: 'metal', width: 18, height: 18, shape: 'nail' });
     expect(ITEM_DEFINITIONS.anvil).toMatchObject({ material: 'metal', maxHp: 800, massKg: 100, width: 70, height: 45, shape: 'rectangle' });
+    expect(ITEM_DEFINITIONS.propane).toMatchObject({ material: 'metal', maxHp: 180, massKg: 22, width: 46, height: 64, shape: 'rectangle' });
+  });
+
+  it('marks the propane tank as the one piece that explodes when it dies', () => {
+    const exploding = Object.values(ITEM_DEFINITIONS).filter((def) => def.explodes === true);
+    expect(exploding.map((def) => def.id)).toEqual(['propane']);
   });
 
   it('makes wood the soft target and metal the hard one', () => {
